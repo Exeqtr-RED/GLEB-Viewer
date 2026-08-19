@@ -557,26 +557,14 @@ class ModelTree(QWidget):
         return folder_path, True
 
     def _get_folder_path_from_item(self, item) -> str | None:
-        """Восстановить полный путь папки по элементу дерева."""
+        """Получить полный путь папки из данных элемента."""
         if item is None:
             return None
-        path = item.data(0, Qt.ItemDataRole.UserRole)
-        if path:
+        # Файлы имеют путь в UserRole — это не папка
+        if item.data(0, Qt.ItemDataRole.UserRole):
             return None
-        parts = []
-        cur = item
-        while cur is not None:
-            text = cur.text(0).strip().lstrip("\U0001F4C2 ").strip()
-            parts.append(text)
-            cur = cur.parent()
-            if cur is self.tree.invisibleRootItem():
-                break
-        parts.reverse()
-        if not parts:
-            return None
-        if parts[0] == os.path.basename(self._root_dir) and self._root_dir:
-            return os.path.join(self._root_dir, *parts[1:])
-        return None
+        # Полный путь папки хранится в UserRole+1
+        return item.data(0, Qt.ItemDataRole.UserRole + 1)
 
     # ─── Поиск / Фильтрация ───────────────────────────────────────
 
@@ -724,8 +712,7 @@ class ModelTree(QWidget):
             self._update_count()
             return
 
-        root_node_name = os.path.basename(self._root_dir) if self._root_dir else "Root"
-        root_node = self._find_or_create_child(root_item, root_node_name, is_folder=True)
+        root_node = root_item  # Корневая папка не отображается в дереве
 
         for fp in sorted_paths:
             if self._root_dir:
@@ -735,8 +722,10 @@ class ModelTree(QWidget):
             parts = rel.replace("/", os.sep).split(os.sep)
 
             current = root_node
+            current_path = self._root_dir
             for part in parts[:-1]:
-                current = self._find_or_create_child(current, part, is_folder=True)
+                current_path = os.path.join(current_path, part)
+                current = self._find_or_create_child(current, part, is_folder=True, full_path=current_path)
 
             fname = parts[-1]
             tags = self._get_model_tags(fp)
@@ -770,15 +759,18 @@ class ModelTree(QWidget):
                 continue
             parts = rel.replace("/", os.sep).split(os.sep)
             current = root_node
+            current_path = self._root_dir
             for part in parts:
-                current = self._find_or_create_child(current, part, is_folder=True)
+                current_path = os.path.join(current_path, part)
+                current = self._find_or_create_child(current, part, is_folder=True, full_path=current_path)
             existing_folders.add(rel.lower())
 
         # Сортируем папки по имени на каждом уровне (файлы уже отсортированы)
         self._sort_folders(root_node)
 
-        # Рекурсивно разворачиваем все уровни дерева
-        self._expand_all(root_node)
+        # Разворачиваем только первый уровень папок
+        for i in range(root_node.childCount()):
+            root_node.child(i).setExpanded(True)
 
         self._update_count()
 
@@ -789,7 +781,8 @@ class ModelTree(QWidget):
     # ─── Внутренние методы ────────────────────────────────────────
 
     def _find_or_create_child(self, parent: QTreeWidgetItem, name: str,
-                                is_folder: bool = False) -> QTreeWidgetItem:
+                                is_folder: bool = False,
+                                full_path: str = "") -> QTreeWidgetItem:
         for i in range(parent.childCount()):
             child = parent.child(i)
             child_text = child.text(0).strip()
@@ -800,6 +793,8 @@ class ModelTree(QWidget):
         item.setFirstColumnSpanned(True)
         if is_folder:
             item.setData(0, Qt.ItemDataRole.UserRole, None)
+            if full_path:
+                item.setData(0, Qt.ItemDataRole.UserRole + 1, full_path)
         return item
 
     def _collect_folder_names(self, parent: QTreeWidgetItem, out: set[str], prefix: str = ""):
@@ -898,6 +893,7 @@ class ModelTree(QWidget):
             self.model_selected.emit(path)
         else:
             # Папка — ждём, не будет ли двойного клика
+            print(f"[Preview] Клик по папке: {item.text(0)}, запускаю таймер")
             self._pending_click_item = item
             self._click_timer.start()
 
@@ -924,10 +920,13 @@ class ModelTree(QWidget):
             return
 
         folder_path = self._get_folder_path_from_item(item)
+        print(f"[Preview] Клик по папке, путь: {folder_path}")
         if not folder_path:
+            print(f"[Preview] folder_path is None, item text: {item.text(0)}")
             return
 
         preview_dir = os.path.join(folder_path, "preview")
+        print(f"[Preview] Ищу preview: {preview_dir}, exists: {os.path.isdir(preview_dir)}")
         if not os.path.isdir(preview_dir):
             return
 
@@ -936,7 +935,9 @@ class ModelTree(QWidget):
         for fname in sorted(os.listdir(preview_dir)):
             ext = os.path.splitext(fname)[1].lower()
             if ext in image_exts:
-                self.preview_requested.emit(os.path.join(preview_dir, fname))
+                img_path = os.path.join(preview_dir, fname)
+                print(f"[Preview] Найдена картинка: {img_path}")
+                self.preview_requested.emit(img_path)
                 return
 
     # ─── Контекстное меню (ПКМ) ──────────────────────────────────

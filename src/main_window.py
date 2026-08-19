@@ -6,7 +6,7 @@ QSplitter: дерево моделей слева, просмотр справа
 import os
 
 from PySide6.QtWidgets import (
-    QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QFileDialog,
+    QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QGridLayout, QFileDialog,
     QMessageBox, QSplitter, QProgressDialog, QInputDialog,
     QLabel, QScrollArea, QSizePolicy,
 )
@@ -82,10 +82,7 @@ class MainWindow(QMainWindow):
         # Автозагрузка моделей из последней папки
         if self._last_dir and os.path.isdir(self._last_dir):
             self._scan_and_load_directory(self._last_dir)
-            # Применить сохранённое состояние скрытия reference
-            if self._settings.value("hide_reference", False, type=bool):  # type: ignore[assignment]
-                self.model_tree.set_hide_reference(True)
-                self._hide_ref_action.setChecked(True)
+            # set_hide_reference сработает через toggled при setChecked в _setup_menu
             self.statusBar().showMessage(
                 f"Загружено из: {self._last_dir}"
             )
@@ -123,20 +120,36 @@ class MainWindow(QMainWindow):
         # Одиночное превью
         self._preview_label = QLabel(self._preview_container)
         self._preview_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self._preview_label.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Ignored)
+        self._preview_label.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
         self._preview_layout.addWidget(self._preview_label)
 
-        # Галерея reference
+        # Галерея reference (3 колонки)
         self._ref_scroll = QScrollArea(self._preview_container)
         self._ref_scroll.setWidgetResizable(True)
         self._ref_scroll.setStyleSheet("QScrollArea { border: none; background: transparent; }")
         self._ref_gallery_widget = QWidget()
-        self._ref_gallery_layout = QHBoxLayout(self._ref_gallery_widget)
-        self._ref_gallery_layout.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
+        self._ref_gallery_layout = QGridLayout(self._ref_gallery_widget)
+        self._ref_gallery_layout.setAlignment(Qt.AlignmentFlag.AlignTop | Qt.AlignmentFlag.AlignHCenter)
         self._ref_gallery_layout.setSpacing(8)
+        self._ref_gallery_layout.setContentsMargins(8, 8, 8, 8)
         self._ref_scroll.setWidget(self._ref_gallery_widget)
         self._preview_layout.addWidget(self._ref_scroll)
         self._ref_scroll.hide()
+
+        # Оверлей для полного просмотра картинки из галереи
+        self._full_view_container = QWidget(self._preview_container)
+        self._full_view_container.setStyleSheet("background: #1a1a1a;")
+        self._full_view_layout = QVBoxLayout(self._full_view_container)
+        self._full_view_layout.setContentsMargins(0, 0, 0, 0)
+        self._full_view_label = QLabel(self._full_view_container)
+        self._full_view_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._full_view_label.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Ignored)
+        self._full_view_label.setStyleSheet("QLabel { background: #1a1a1a; }")
+        self._full_view_layout.addWidget(self._full_view_label)
+        self._full_view_container.hide()
+        self._full_view_container.resize(self.f3d_widget.size())
+        self._full_view_label.mousePressEvent = lambda event: self._hide_full_view()
+        self._full_view_container.mousePressEvent = lambda event: self._hide_full_view()
 
         self._preview_container.hide()
 
@@ -211,13 +224,14 @@ class MainWindow(QMainWindow):
         hide_ref = QAction(self._make_icon("reference_folder.svg"), "Скрывать reference", self)
         hide_ref.setCheckable(True)
         hide_ref.toggled.connect(self._on_hide_ref_toggled)
-        hide_ref.setChecked(self._settings.value("hide_reference", False, type=bool))  # type: ignore[assignment]
-        hide_ref.triggered.connect(self._toggle_hide_reference)
         view_menu.addAction(hide_ref)
         self._hide_ref_action = hide_ref
+        # Устанавливаем ПОСЛЕ подключения сигнала
+        if self._settings.value("hide_reference", False, type=bool):  # type: ignore[assignment]
+            hide_ref.setChecked(True)
 
         # ── Анимация ──
-        anim_menu = menubar.addMenu("Анимация")
+        anim_menu = menubar.addMenu(self._make_icon("animation.svg"), "Анимация")
 
         self._anim_play_act = QAction("Воспроизвести / Пауза", self)
         self._anim_play_act.setShortcut("Space")
@@ -310,12 +324,13 @@ class MainWindow(QMainWindow):
             self.model_tree.header.setText(f"Модели ({os.path.basename(os.path.dirname(filepath))})")
 
     def _hide_preview_overlay(self):
+        self._full_view_container.hide()
         self._preview_container.hide()
         self._preview_label.show()
         self._ref_scroll.hide()
 
     def _show_preview_overlay(self):
-        self._preview_container.resize(self.f3d_widget.size())
+        self._preview_container.setGeometry(0, 0, self.f3d_widget.width(), self.f3d_widget.height())
         self._preview_container.raise_()
         self._preview_container.show()
 
@@ -330,15 +345,18 @@ class MainWindow(QMainWindow):
         """Показать картинку превью поверх f3d виджета."""
         pixmap = QPixmap(image_path)
         if pixmap.isNull():
+            print(f"[Preview] QPixmap isNull для: {image_path}")
             return
+        self._full_view_container.hide()
         self._ref_scroll.hide()
+        self._preview_label.show()
         self._preview_label.setPixmap(pixmap)
         self._preview_label.setScaledContents(True)
         self._show_preview_overlay()
         self.statusBar().showMessage(f"Превью: {os.path.basename(image_path)}")
 
     def _on_reference_gallery(self, folder_path: str):
-        """Показать все картинки из папки reference как галерею."""
+        """Показать все картинки из папки reference как галерею в 3 колонки."""
         image_exts = {".png", ".jpg", ".jpeg", ".webp", ".bmp", ".gif", ".tiff", ".tif"}
         images = []
         try:
@@ -358,31 +376,70 @@ class MainWindow(QMainWindow):
                 child.widget().deleteLater()
 
         self._preview_label.hide()
+        self._full_view_container.hide()
         self._ref_scroll.show()
 
-        max_h = self.f3d_widget.height() - 16
-        thumb_w = int(max_h * 0.66)
-        if thumb_w < 100:
-            thumb_w = 100
+        # Рисуем ячейки фиксированного размера в 3 колонки
+        cols = 3
+        available_w = self.f3d_widget.width() - 16
+        available_h = self.f3d_widget.height() - 16
+        cell_w = max((available_w - (cols - 1) * 8) // cols, 100)
+        cell_h = max(int(cell_w * 0.66), 100)
 
-        for img_path in images:
-            lbl = QLabel(self._ref_gallery_widget)
-            lbl.setFixedSize(thumb_w, max_h)
-            lbl.setScaledContents(True)
-            lbl.setPixmap(QPixmap(img_path))
-            lbl.setToolTip(os.path.basename(img_path))
-            lbl.setCursor(Qt.CursorShape.PointingHandCursor)
-            self._ref_gallery_layout.addWidget(lbl)
+        for idx, img_path in enumerate(images):
+            row, col = divmod(idx, cols)
+            frame = QWidget(self._ref_gallery_widget)
+            frame.setFixedSize(cell_w, cell_h)
+            frame.setStyleSheet("QWidget { background: #2a2a2a; border: 1px solid #444; border-radius: 4px; }")
+            frame.setCursor(Qt.CursorShape.PointingHandCursor)
+            frame.setToolTip(os.path.basename(img_path))
+            fl = QVBoxLayout(frame)
+            fl.setContentsMargins(4, 4, 4, 4)
+            fl.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            lbl = QLabel(frame)
+            lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            lbl.setScaledContents(False)
+            lbl.setMinimumSize(1, 1)
+            pixmap = QPixmap(img_path)
+            if not pixmap.isNull():
+                lbl.setPixmap(pixmap.scaled(
+                    cell_w - 8, cell_h - 8,
+                    Qt.AspectRatioMode.KeepAspectRatio,
+                    Qt.TransformationMode.SmoothTransformation,
+                ))
+            fl.addWidget(lbl)
+            lbl.mousePressEvent = lambda event, p=img_path, cv=self._show_full_view: cv(p)
+            frame.mousePressEvent = lambda event, p=img_path, cv=self._show_full_view: cv(p)
+            self._ref_gallery_layout.addWidget(frame, row, col)
 
         self._show_preview_overlay()
         self.statusBar().showMessage(f"Reference: {len(images)} изображений")
 
+    def _show_full_view(self, image_path: str):
+        """Показать картинку во весь экран (поверх галереи)."""
+        pixmap = QPixmap(image_path)
+        if pixmap.isNull():
+            return
+        self._full_view_label.setPixmap(pixmap.scaled(
+            self._full_view_label.size(),
+            Qt.AspectRatioMode.KeepAspectRatio,
+            Qt.TransformationMode.SmoothTransformation,
+        ))
+        self._full_view_label.adjustSize()
+        self._full_view_container.resize(self.f3d_widget.size())
+        self._full_view_container.raise_()
+        self._full_view_container.show()
+        self.statusBar().showMessage(f"Reference: {os.path.basename(image_path)} — кликните чтобы закрыть")
+
+    def _hide_full_view(self):
+        """Скрыть полный просмотр картинки."""
+        self._full_view_container.hide()
+
     def _on_hide_ref_toggled(self, checked: bool):
-        """Сменить иконку пункта при переключении."""
+        """Сменить иконку, текст и скрыть/показать reference папки."""
         icon_name = "reference_folder_dis.svg" if checked else "reference_folder.svg"
         self._hide_ref_action.setIcon(self._make_icon(icon_name))
-
-    def _toggle_hide_reference(self, checked: bool):
+        self._hide_ref_action.setText("Отобразить reference" if checked else "Скрывать reference")
         self.model_tree.set_hide_reference(checked)
         self._settings.setValue("hide_reference", checked)
         self.statusBar().showMessage(f"Reference папки: {'скрыты' if checked else 'отображены'}")
