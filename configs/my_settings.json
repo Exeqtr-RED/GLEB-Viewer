@@ -1,0 +1,49 @@
+{
+  "render": {
+    "raytracing.enable": false,
+    "raytracing.denoise": false,
+    "raytracing.samples": 5,
+    "effect.ambient_occlusion": true,
+    "effect.tone_mapping": false,
+    "effect.antialiasing.enable": true,
+    "effect.antialiasing.mode": "fxaa",
+    "effect.blending.enable": false,
+    "effect.translucency_support": true,
+    "background.skybox": true,
+    "background.blur.enable": false,
+    "background.blur.coc": 20.0,
+    "background.color": [
+      0.2,
+      0.2,
+      0.2
+    ],
+    "effect.display_depth": false
+  },
+  "scene": {
+    "hdri.ambient": true,
+    "light.intensity": 1.0,
+    "grid.enable": true,
+    "grid.absolute": false,
+    "grid.subdivisions": 10,
+    "axes_grid.enable": false,
+    "up_direction": [
+      0.0,
+      1.0,
+      0.0
+    ],
+    "invert_zoom": false
+  },
+  "model": {
+    "checkerboard.enable": true,
+    "normal_glyphs.enable": false,
+    "armature.enable": false,
+    "point_sprites.enable": false,
+    "point_sprites.size": 10.0,
+    "point_sprites.type": "sphere",
+    "point_sprites.absolute_size": false,
+    "volume.enable": false,
+    "volume.inverse": false,
+    "scivis.enable": false,
+    "scivis.component": -1
+  }
+}

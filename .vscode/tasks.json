@@ -1,0 +1,99 @@
+{
+    "version": "2.0.0",
+    "tasks": [
+        {
+            "label": "Запустить программу",
+            "type": "shell",
+            "command": "python",
+            "args": ["${workspaceFolder}/main.py"],
+            "problemMatcher": [],
+            "group": {
+                "kind": "build",
+                "isDefault": true
+            },
+            "presentation": {
+                "reveal": "always",
+                "panel": "shared"
+            }
+        },
+        {
+            "label": "Установить зависимости",
+            "type": "shell",
+            "command": "python",
+            "args": ["-m", "pip", "install", "-r", "requirements.txt"],
+            "problemMatcher": []
+        },
+        {
+            "label": "Создать venv",
+            "type": "shell",
+            "command": "python",
+            "args": ["-m", "venv", ".venv"],
+            "problemMatcher": []
+        },
+        {
+            "label": "Установить pyinstaller",
+            "type": "shell",
+            "command": "python",
+            "args": ["-m", "pip", "install", "pyinstaller"],
+            "problemMatcher": []
+        },
+        {
+            "label": "Собрать EXE (onedir)",
+            "type": "shell",
+            "command": "python",
+            "args": [
+                "-m", "PyInstaller",
+                "--name=GLEB_Viewer",
+                "--windowed",
+                "--onedir",
+                "--noconfirm",
+                "--hidden-import=f3d",
+                "--collect-data=f3d",
+                "--collect-data=PySide6",
+                "\"--add-data=themes:themes\"",
+                "\"--add-data=hdri:hdri\"",
+                "main.py"
+            ],
+            "problemMatcher": [],
+            "dependsOn": ["Установить pyinstaller"],
+            "presentation": {
+                "reveal": "always",
+                "panel": "shared"
+            }
+        },
+        {
+            "label": "Собрать EXE (onefile)",
+            "type": "shell",
+            "command": "python",
+            "args": [
+                "-m", "PyInstaller",
+                "--name=GLEB_Viewer",
+                "--windowed",
+                "--onefile",
+                "--noconfirm",
+                "--hidden-import=f3d",
+                "--collect-data=f3d",
+                "--collect-data=PySide6",
+                "\"--add-data=themes:themes\"",
+                "\"--add-data=hdri:hdri\"",
+                "main.py"
+            ],
+            "problemMatcher": [],
+            "dependsOn": ["Установить pyinstaller"],
+            "presentation": {
+                "reveal": "always",
+                "panel": "shared"
+            }
+        },
+        {
+            "label": "Очистить build",
+            "type": "shell",
+            "command": "powershell",
+            "args": [
+                "-Command",
+                "if (Test-Path dist) { Remove-Item -Recurse -Force dist }; if (Test-Path build) { Remove-Item -Recurse -Force build }; if (Test-Path *.spec) { Remove-Item -Force *.spec }"
+            ],
+            "problemMatcher": []
+        }
+    ]
+}

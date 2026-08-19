@@ -1,0 +1,397 @@
+/* ============================================================
+   QSS-стиль в духе Astra Linux (Fly)
+   Рекомендуется установить базовый стиль Fusion:
+   app.setStyle("Fusion")
+   ============================================================ */
+
+/* ---------- Глобальные настройки ---------- */
+* {
+    font-family: "PT Astra Sans", "Arial", sans-serif;
+    font-size: 13px;
+    color: #e0e0e0;
+    background-color: #2d2d2d;
+    selection-background-color: #00ad9b;
+    selection-color: #ffffff;
+}
+
+/* ---------- Главное окно ---------- */
+QMainWindow {
+    background-color: #2d2d2d;
+    border: 1px solid #3a3a3a;
+}
+
+QMainWindow::separator {
+    background: #3a3a3a;
+    width: 1px;
+    height: 1px;
+}
+
+/* ---------- Строка меню ---------- */
+QMenuBar {
+    background-color: #323232;
+    border-bottom: 1px solid #454545;
+    padding: 2px 4px;
+}
+
+QMenuBar::item {
+    background: transparent;
+    padding: 4px 10px;
+    border-radius: 2px;
+}
+
+QMenuBar::item:selected {
+    background-color: #00ad9b;
+    color: #ffffff;
+}
+
+/* ---------- Меню ---------- */
+QMenu {
+    background-color: #323232;
+    border: 1px solid #454545;
+    padding: 4px 0;
+}
+
+QMenu::item {
+    padding: 6px 30px 6px 20px;
+    border-radius: 2px;
+}
+
+QMenu::item:selected {
+    background-color: #00ad9b;
+    color: #ffffff;
+}
+
+QMenu::separator {
+    height: 1px;
+    background: #454545;
+    margin: 4px 10px;
+}
+
+/* ---------- Панель инструментов ---------- */
+QToolBar {
+    background-color: #323232;
+    border-bottom: 1px solid #454545;
+    padding: 2px;
+    spacing: 4px;
+}
+
+QToolBar::separator {
+    width: 1px;
+    background: #454545;
+    margin: 2px 4px;
+}
+
+QToolButton {
+    background-color: transparent;
+    border: 1px solid transparent;
+    border-radius: 2px;
+    padding: 4px 8px;
+    color: #e0e0e0;
+}
+
+QToolButton:hover {
+    background-color: #3d3d3d;
+    border: 1px solid #555555;
+}
+
+QToolButton:pressed {
+    background-color: #00ad9b;
+    color: #ffffff;
+}
+
+QToolButton:checked {
+    background-color: #00ad9b;
+    color: #ffffff;
+}
+
+/* ---------- Кнопки ---------- */
+QPushButton {
+    background-color: #3c3c3c;
+    border: 1px solid #555555;
+    border-radius: 3px;
+    padding: 6px 16px;
+    color: #e0e0e0;
+    min-width: 60px;
+}
+
+QPushButton:hover {
+    background-color: #4a4a4a;
+    border: 1px solid #00ad9b;
+}
+
+QPushButton:pressed {
+    background-color: #00ad9b;
+    color: #ffffff;
+    border: 1px solid #00ad9b;
+}
+
+QPushButton:disabled {
+    background-color: #353535;
+    color: #6a6a6a;
+    border: 1px solid #454545;
+}
+
+QPushButton:default {
+    border: 2px solid #00ad9b;
+}
+
+/* ---------- Поля ввода ---------- */
+QLineEdit, QTextEdit, QPlainTextEdit {
+    background-color: #1e1e1e;
+    border: 1px solid #555555;
+    border-radius: 2px;
+    padding: 4px 8px;
+    color: #e0e0e0;
+    selection-background-color: #00ad9b;
+}
+
+QLineEdit:focus, QTextEdit:focus, QPlainTextEdit:focus {
+    border: 1px solid #00ad9b;
+}
+
+/* ---------- Спинбокс ---------- */
+QSpinBox, QDoubleSpinBox {
+    background-color: #1e1e1e;
+    border: 1px solid #555555;
+    border-radius: 2px;
+    padding: 4px 8px;
+    color: #e0e0e0;
+    min-width: 70px;
+}
+
+QSpinBox:focus, QDoubleSpinBox:focus {
+    border: 1px solid #00ad9b;
+}
+
+QSpinBox::up-button, QDoubleSpinBox::up-button {
+    subcontrol-origin: border;
+    subcontrol-position: top right;
+    width: 20px;
+    border-left: 1px solid #555555;
+    border-bottom: 1px solid #555555;
+    background: #3c3c3c;
+}
+
+QSpinBox::down-button, QDoubleSpinBox::down-button {
+    subcontrol-origin: border;
+    subcontrol-position: bottom right;
+    width: 20px;
+    border-left: 1px solid #555555;
+    background: #3c3c3c;
+}
+
+/* ---------- Комбобокс ---------- */
+QComboBox {
+    background-color: #1e1e1e;
+    border: 1px solid #555555;
+    border-radius: 2px;
+    padding: 4px 8px;
+    color: #e0e0e0;
+    min-width: 80px;
+}
+
+QComboBox:focus {
+    border: 1px solid #00ad9b;
+}
+
+QComboBox::drop-down {
+    subcontrol-origin: padding;
+    subcontrol-position: top right;
+    width: 22px;
+    border-left: 1px solid #555555;
+    background: #3c3c3c;
+}
+
+QComboBox QAbstractItemView {
+    background-color: #323232;
+    border: 1px solid #555555;
+    selection-background-color: #00ad9b;
+    color: #e0e0e0;
+}
+
+/* ---------- Слайдер ---------- */
+QSlider::groove:horizontal {
+    background: #3a3a3a;
+    height: 6px;
+    border-radius: 3px;
+}
+
+QSlider::handle:horizontal {
+    background: #00ad9b;
+    width: 16px;
+    height: 16px;
+    margin: -5px 0;
+    border-radius: 8px;
+}
+
+QSlider::handle:horizontal:hover {
+    background: #00c4af;
+}
+
+/* ---------- Скроллбар ---------- */
+QScrollBar:horizontal {
+    background: #2d2d2d;
+    height: 14px;
+    border: none;
+}
+
+QScrollBar::handle:horizontal {
+    background: #00ad9b;
+    min-width: 30px;
+    border-radius: 3px;
+    margin: 2px;
+}
+
+QScrollBar::add-line:horizontal, QScrollBar::sub-line:horizontal {
+    width: 0;
+}
+
+QScrollBar:vertical {
+    background: #2d2d2d;
+    width: 14px;
+    border: none;
+}
+
+QScrollBar::handle:vertical {
+    background: #00ad9b;
+    min-height: 30px;
+    border-radius: 3px;
+    margin: 2px;
+}
+
+QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {
+    height: 0;
+}
+
+/* ---------- Табы ---------- */
+QTabWidget::pane {
+    background: #2d2d2d;
+    border: 1px solid #454545;
+    border-top: 2px solid #00ad9b;
+}
+
+QTabBar::tab {
+    background: #323232;
+    border: 1px solid #454545;
+    border-bottom: none;
+    padding: 6px 16px;
+    margin-right: 2px;
+    border-top-left-radius: 3px;
+    border-top-right-radius: 3px;
+    color: #b0b0b0;
+}
+
+QTabBar::tab:selected {
+    background: #2d2d2d;
+    color: #ffffff;
+    border-bottom: 2px solid #00ad9b;
+}
+
+QTabBar::tab:hover:!selected {
+    background: #3d3d3d;
+    color: #ffffff;
+}
+
+/* ---------- Групбокс ---------- */
+QGroupBox {
+    border: 1px solid #555555;
+    border-radius: 4px;
+    margin-top: 12px;
+    padding-top: 16px;
+    font-weight: bold;
+    color: #00ad9b;
+}
+
+QGroupBox::title {
+    subcontrol-origin: margin;
+    subcontrol-position: top left;
+    padding: 0 8px;
+    background-color: #2d2d2d;
+}
+
+/* ---------- Чекбокс / Радиокнопка ---------- */
+QCheckBox, QRadioButton {
+    spacing: 6px;
+    color: #e0e0e0;
+}
+
+QCheckBox::indicator {
+    width: 16px;
+    height: 16px;
+    border: 2px solid #555555;
+    border-radius: 2px;
+    background: #1e1e1e;
+}
+
+QCheckBox::indicator:checked {
+    background: #00ad9b;
+    border-color: #00ad9b;
+}
+
+QRadioButton::indicator {
+    width: 16px;
+    height: 16px;
+    border: 2px solid #555555;
+    border-radius: 8px;
+    background: #1e1e1e;
+}
+
+QRadioButton::indicator:checked {
+    background: #00ad9b;
+    border-color: #00ad9b;
+}
+
+/* ---------- Прогрессбар ---------- */
+QProgressBar {
+    background: #1e1e1e;
+    border: 1px solid #555555;
+    border-radius: 3px;
+    text-align: center;
+    color: #ffffff;
+}
+
+QProgressBar::chunk {
+    background: #00ad9b;
+    border-radius: 2px;
+}
+
+/* ---------- Деревья и списки ---------- */
+QTreeView, QListView, QTableView {
+    background-color: #1e1e1e;
+    border: 1px solid #555555;
+    gridline-color: #3a3a3a;
+    selection-background-color: #00ad9b;
+    selection-color: #ffffff;
+    color: #e0e0e0;
+}
+
+QTreeView::item:hover, QListView::item:hover, QTableView::item:hover {
+    background: #2a4a45;
+}
+
+QHeaderView::section {
+    background: #323232;
+    color: #00ad9b;
+    padding: 4px 8px;
+    border: none;
+    border-right: 1px solid #454545;
+    border-bottom: 1px solid #454545;
+    font-weight: bold;
+}
+
+/* ---------- Подсказки ---------- */
+QToolTip {
+    background: #3c3c3c;
+    color: #e0e0e0;
+    border: 1px solid #00ad9b;
+    padding: 4px;
+    border-radius: 2px;
+}
+
+/* ---------- Статус-бар ---------- */
+QStatusBar {
+    background: #323232;
+    border-top: 1px solid #454545;
+    color: #b0b0b0;
+    padding: 2px;
+}
