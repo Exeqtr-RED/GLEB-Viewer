@@ -262,7 +262,7 @@ class F3DWidget(QWidget):
             painter.setPen(Qt.GlobalColor.white)
             painter.drawText(
                 self.rect(), Qt.AlignmentFlag.AlignCenter,
-                "Перетащите 3D модель сюда\nили Файл -> Открыть"
+                "Перетащите 3D модель сюда\nили Настройки → Открыть папку"
             )
         painter.end()
 

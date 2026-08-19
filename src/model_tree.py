@@ -613,13 +613,9 @@ class ModelTree(QWidget):
             if path and self._active_tag_filter:
                 tag_ok = self._active_tag_filter in self._get_model_tags(path)
 
-            # Скрытие reference папок
+            # Скрытие reference папок — безусловно
             if self._hide_reference and clean_text.lower() == "reference":
-                child_has_visible = self._apply_filter(child, text_pattern)
-                child.setHidden(not child_has_visible)
-                if not child_has_visible:
-                    continue
-                has_visible = True
+                child.setHidden(True)
                 continue
 
             # Текст-фильтр (для файлов и папок)
@@ -781,16 +777,13 @@ class ModelTree(QWidget):
         # Сортируем папки по имени на каждом уровне (файлы уже отсортированы)
         self._sort_folders(root_node)
 
-        root_node.setExpanded(True)
-        for i in range(root_node.childCount()):
-            root_node.child(i).setExpanded(True)
-            for j in range(root_node.child(i).childCount()):
-                root_node.child(i).child(j).setExpanded(True)
+        # Рекурсивно разворачиваем все уровни дерева
+        self._expand_all(root_node)
 
         self._update_count()
 
-        # Применяем текущий фильтр
-        if self.search_edit.text().strip() or self._active_tag_filter:
+        # Применяем текущий фильтр (текстовый, теговый или скрытие reference)
+        if self.search_edit.text().strip() or self._active_tag_filter or self._hide_reference:
             self._do_filter()
 
     # ─── Внутренние методы ────────────────────────────────────────
@@ -848,7 +841,25 @@ class ModelTree(QWidget):
     def set_hide_reference(self, hide: bool):
         """Показать/скрыть папки reference в дереве."""
         self._hide_reference = hide
-        self._rebuild_tree()
+        # Всегда вызываем _do_filter(), чтобы учесть все активные фильтры
+        # (текстовый поиск, тег-фильтр и скрытие reference)
+        self._do_filter()
+
+    def _expand_all(self, parent: QTreeWidgetItem):
+        """Рекурсивно развернуть все узлы дерева."""
+        parent.setExpanded(True)
+        for i in range(parent.childCount()):
+            self._expand_all(parent.child(i))
+
+    def _hide_ref_folders(self, parent: QTreeWidgetItem):
+        """Рекурсивно скрыть все папки с именем reference."""
+        for i in range(parent.childCount()):
+            child = parent.child(i)
+            text = child.text(0).strip().lstrip("\U0001F4C2 ").strip()
+            if text.lower() == "reference":
+                child.setHidden(True)
+            else:
+                self._hide_ref_folders(child)
 
     def _update_count(self):
         n = len(self._all_paths)
