@@ -1,0 +1,51 @@
+name: Build Windows EXE
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install pyinstaller
+
+      - name: Install UPX
+        run: |
+          choco install upx -y
+          echo "UPX_PATH=C:\ProgramData\chocolatey\bin\upx.exe" >> $env:GITHUB_ENV
+
+      - name: Build with PyInstaller
+        run: |
+          pyinstaller GLEB_Viewer.spec --noconfirm
+
+      - name: Zip artifact
+        run: |
+          Compress-Archive -Path "dist\GLEB_Viewer" -DestinationPath "GLEB_Viewer-${{ github.ref_name }}.zip"
+
+      - name: Create Release and upload
+        uses: softprops/action-gh-release@v2
+        with:
+          name: GLEB Viewer ${{ github.ref_name }}
+          body: |
+            Автоматическая сборка из тега `${{ github.ref_name }}`
+            **Коммит:** ${{ github.sha }}
+          files: GLEB_Viewer-${{ github.ref_name }}.zip
+          generate_release_notes: true
