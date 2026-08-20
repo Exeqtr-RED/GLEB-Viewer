@@ -1,0 +1,33 @@
+# Build output
+build/
+dist/
+
+# Python cache
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS files
+Thumbs.db
+.DS_Store
+
+# PyInstaller
+*.spec
+
+# Logs
+*.log
+
+# Tags data (user-specific, not for repo)
+tags.json

@@ -6,7 +6,7 @@ QSplitter: дерево моделей слева, просмотр справа
 import os
 
 from PySide6.QtWidgets import (
-    QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QGridLayout, QFileDialog,
+    QMainWindow, QWidget, QVBoxLayout, QGridLayout, QFileDialog,
     QMessageBox, QSplitter, QProgressDialog, QInputDialog,
     QLabel, QScrollArea, QSizePolicy,
 )
@@ -15,7 +15,6 @@ from PySide6.QtGui import (
     QAction, QActionGroup, QKeySequence,
     QDropEvent, QDragEnterEvent, QPixmap, QIcon,
 )
-from PySide6.QtWidgets import QApplication
 
 from src.f3d_widget import F3DWidget
 from src.model_tree import ModelTree
@@ -40,7 +39,7 @@ CATEGORY_HDRI: dict[str, str] = {
     "zemlya":   "land_4k.hdr",
 }
 
-# Доступные темы: имя → файл
+# Доступные темы: имя -> файл
 THEMES = {
     "По умолчанию": None,  # без темы
     "Тёмная": "dark_theme.qss",
@@ -88,10 +87,10 @@ class MainWindow(QMainWindow):
             )
         else:
             self.statusBar().showMessage(
-                "Готов. Настройки → Открыть папку"
+                "Готов. Настройки -> Открыть папку"
             )
 
-    # ─── UI ───────────────────────────────────────────────────────
+    # --- UI --------------------------------------------------------------
 
     def _setup_ui(self):
         central = QWidget()
@@ -102,11 +101,11 @@ class MainWindow(QMainWindow):
         self.splitter = QSplitter(Qt.Orientation.Horizontal)
         layout.addWidget(self.splitter)
 
-        # Слева — дерево моделей
+        # Слева - дерево моделей
         self.model_tree = ModelTree()
         self.splitter.addWidget(self.model_tree)
 
-        # Справа — F3D просмотр
+        # Справа - F3D просмотр
         self.f3d_widget = F3DWidget()
         self.splitter.addWidget(self.f3d_widget)
 
@@ -167,7 +166,7 @@ class MainWindow(QMainWindow):
     def _setup_menu(self):
         menubar = self.menuBar()
 
-        # ── Настройки (бывший Файл) ──
+        # -- Настройки (бывший Файл) --
         settings_menu = menubar.addMenu(self._make_icon("settings.svg"), "Настройки")
 
         open_dir = QAction("Выбрать директорию моделей", self)
@@ -181,10 +180,10 @@ class MainWindow(QMainWindow):
         f3d_settings.triggered.connect(self._show_settings)
         settings_menu.addAction(f3d_settings)
 
-        # ── Вид ──
+        # -- Вид --
         view_menu = menubar.addMenu(self._make_icon("theme.svg"), "Вид")
 
-        # Подменю «Тема»
+        # Подменю "Тема"
         theme_menu = view_menu.addMenu("Тема")
         self._theme_action_group = QActionGroup(self)
         self._theme_action_group.setExclusive(True)
@@ -197,7 +196,7 @@ class MainWindow(QMainWindow):
             theme_menu.addAction(action)
             self._theme_actions[theme_name] = action
 
-        # Подменю «Шрифт дерева»
+        # Подменю "Шрифт дерева"
         tree_font_menu = view_menu.addMenu("Шрифт дерева")
         self._font_action_group = QActionGroup(self)
         self._font_action_group.setExclusive(True)
@@ -208,7 +207,7 @@ class MainWindow(QMainWindow):
             self._font_action_group.addAction(act)
             tree_font_menu.addAction(act)
 
-        # Подменю «Шрифт меню»
+        # Подменю "Шрифт меню"
         menu_font_menu = view_menu.addMenu("Шрифт меню")
         self._menu_font_action_group = QActionGroup(self)
         self._menu_font_action_group.setExclusive(True)
@@ -230,7 +229,7 @@ class MainWindow(QMainWindow):
         if self._settings.value("hide_reference", False, type=bool):  # type: ignore[assignment]
             hide_ref.setChecked(True)
 
-        # ── Анимация ──
+        # -- Анимация --
         anim_menu = menubar.addMenu(self._make_icon("animation.svg"), "Анимация")
 
         self._anim_play_act = QAction("Воспроизвести / Пауза", self)
@@ -254,14 +253,14 @@ class MainWindow(QMainWindow):
             self._speed_action_group.addAction(act)
             speed_menu.addAction(act)
 
-        # ── Пакетный менеджер ──
+        # -- Пакетный менеджер --
         batch_menu = menubar.addMenu(self._make_icon("screenshot.svg"), "Пакетный менеджер")
 
         batch_screenshots = QAction("Создать скриншоты всех моделей", self)
         batch_screenshots.triggered.connect(self._batch_screenshots)
         batch_menu.addAction(batch_screenshots)
 
-        # ── Справка ──
+        # -- Справка --
         help_menu = menubar.addMenu(self._make_icon("about.svg"), "Справка")
         about = QAction("О программе", self)
         about.triggered.connect(self._show_about)
@@ -281,7 +280,7 @@ class MainWindow(QMainWindow):
         self.model_tree.reference_gallery_requested.connect(self._on_reference_gallery)
         self.model_tree.tags_changed.connect(self._on_tags_changed)
 
-    # ─── Действия ────────────────────────────────────────────────
+    # --- Действия ---------------------------------------------------------
 
     def _open_directory(self):
         start_dir = self._last_dir if self._last_dir else ""
@@ -314,7 +313,7 @@ class MainWindow(QMainWindow):
     def _do_load_model(self, filepath: str):
         self.model_tree.add_models([filepath])
         self.f3d_widget.clear_scene()
-        # HDRI ДО загрузки модели — f3d применяет окружение при scene.add()
+        # HDRI ДО загрузки модели - f3d применяет окружение при scene.add()
         self._apply_hdri_by_path(filepath)
         self.f3d_widget.load_model(filepath)
 
@@ -326,8 +325,6 @@ class MainWindow(QMainWindow):
     def _hide_preview_overlay(self):
         self._full_view_container.hide()
         self._preview_container.hide()
-        self._preview_label.show()
-        self._ref_scroll.hide()
 
     def _show_preview_overlay(self):
         self._preview_container.setGeometry(0, 0, self.f3d_widget.width(), self.f3d_widget.height())
@@ -349,9 +346,13 @@ class MainWindow(QMainWindow):
             return
         self._full_view_container.hide()
         self._ref_scroll.hide()
+        self._preview_label.setScaledContents(False)
+        self._preview_label.setPixmap(pixmap.scaled(
+            self._preview_label.size(),
+            Qt.AspectRatioMode.KeepAspectRatio,
+            Qt.TransformationMode.SmoothTransformation,
+        ))
         self._preview_label.show()
-        self._preview_label.setPixmap(pixmap)
-        self._preview_label.setScaledContents(True)
         self._show_preview_overlay()
         self.statusBar().showMessage(f"Превью: {os.path.basename(image_path)}")
 
@@ -420,8 +421,11 @@ class MainWindow(QMainWindow):
         pixmap = QPixmap(image_path)
         if pixmap.isNull():
             return
+        target_size = self._full_view_label.size()
+        if target_size.width() < 1 or target_size.height() < 1:
+            target_size = self.f3d_widget.size()
         self._full_view_label.setPixmap(pixmap.scaled(
-            self._full_view_label.size(),
+            target_size,
             Qt.AspectRatioMode.KeepAspectRatio,
             Qt.TransformationMode.SmoothTransformation,
         ))
@@ -429,7 +433,7 @@ class MainWindow(QMainWindow):
         self._full_view_container.resize(self.f3d_widget.size())
         self._full_view_container.raise_()
         self._full_view_container.show()
-        self.statusBar().showMessage(f"Reference: {os.path.basename(image_path)} — кликните чтобы закрыть")
+        self.statusBar().showMessage(f"Reference: {os.path.basename(image_path)} - кликните чтобы закрыть")
 
     def _hide_full_view(self):
         """Скрыть полный просмотр картинки."""
@@ -514,10 +518,12 @@ class MainWindow(QMainWindow):
         dialog = F3DSettingsDialog(self.f3d_widget, self)
         dialog.exec()
 
-    # ─── Пакетный менеджер ──────────────────────────────────────
+    # --- Пакетный менеджер -----------------------------------------------
 
     def _batch_screenshots(self):
         """Создать скриншоты для всех моделей из дерева."""
+        from PySide6.QtWidgets import QApplication
+
         paths = self.model_tree.get_all_paths()
         if not paths:
             QMessageBox.information(self, "Пакетный менеджер",
@@ -601,7 +607,7 @@ class MainWindow(QMainWindow):
             except Exception as e:
                 errors += 1
                 error_list.append(f"{name}: {e}")
-                print(f"[Batch] Ошибка: {name} — {e}")
+                print(f"[Batch] Ошибка: {name} - {e}")
 
         progress.setValue(total)
         progress.close()
@@ -615,9 +621,9 @@ class MainWindow(QMainWindow):
             msg += "\n\nОшибки:\n" + "\n".join(error_list[:20])
             if len(error_list) > 20:
                 msg += f"\n... и ещё {len(error_list) - 20}"
-        QMessageBox.information(self, "Пакетный менеджер — Готово", msg)
+        QMessageBox.information(self, "Пакетный менеджер - Готово", msg)
 
-    # ─── Анимация ──────────────────────────────────────────────
+    # --- Анимация --------------------------------------------------------
 
     def _toggle_animation(self):
         self.f3d_widget.toggle_animation()
@@ -629,11 +635,11 @@ class MainWindow(QMainWindow):
         self.f3d_widget.set_animation_speed(speed)
 
     def _on_animation_state_changed(self, playing: bool):
-        state = "▶ Воспроизведение" if playing else "⏸ Пауза"
+        state = "Воспроизведение" if playing else "Пауза"
         speed_info = f" ({self.f3d_widget.animation_speed}x)" if playing else ""
         self.statusBar().showMessage(f"Анимация: {state}{speed_info}")
 
-    # ─── Теги ─────────────────────────────────────────────────────
+    # --- Теги -------------------------------------------------------------
 
     def _on_tags_changed(self):
         self.statusBar().showMessage("Теги обновлены")
@@ -642,17 +648,17 @@ class MainWindow(QMainWindow):
         msg = QMessageBox(self)
         msg.setWindowTitle("О программе")
         msg.setText(
-            "<h3>GLEB Viewer — F3D Embedded Edition</h3>"
+            "<h3>GLEB Viewer - F3D Embedded Edition</h3>"
             "<p>Версия 2.0</p>"
             "<p>F3D 3.5.0 + PySide6</p>"
             "<p><a href='https://f3d.app' style='color: #1c9dff; font-weight: bold;'>f3d.app</a></p>"
             "<p>Powered by Exeqtr <a href='https://my-3d-portfolio-beige.vercel.app/#contact' style='color: #1c9dff; font-weight: bold;'>contact</a></p>"
         )
-        msg.setStandardButtons(QMessageBox.StandardButton.Ok)  # Правильный синтаксис
-        msg.button(QMessageBox.StandardButton.Ok).setFixedSize(100, 30)  # Правильный синтаксис
+        msg.setStandardButtons(QMessageBox.StandardButton.Ok)
+        msg.button(QMessageBox.StandardButton.Ok).setFixedSize(100, 30)
         msg.exec()
 
-    # ─── Слоты ────────────────────────────────────────────────────
+    # --- Слоты -------------------------------------------------------------
 
     def _on_model_loaded(self, filepath: str, _user_data):
         name = os.path.basename(filepath)
@@ -665,7 +671,7 @@ class MainWindow(QMainWindow):
         self.statusBar().showMessage(f"Ошибка: {message}")
         QMessageBox.warning(self, "Ошибка", message)
 
-    # ─── Drag & Drop ──────────────────────────────────────────────
+    # --- Drag & Drop ------------------------------------------------------
 
     def dragEnterEvent(self, event: QDragEnterEvent):
         if event.mimeData().hasUrls():
@@ -677,7 +683,7 @@ class MainWindow(QMainWindow):
             if filepath:
                 self._do_load_model(filepath)
 
-    # ─── Close ────────────────────────────────────────────────────
+    # --- Close ------------------------------------------------------------
 
     def resizeEvent(self, event):
         super().resizeEvent(event)

@@ -21,7 +21,7 @@ from PySide6.QtCore import Qt, Signal, QTimer
 from PySide6.QtGui import QAction, QPixmap
 
 
-# ─── Таблица транслитерации ──────────────────────────────────────
+# --- Таблица транслитерации ---------------------------------------------
 
 _TRANSLIT_MULTI = {
     "а": ["a"], "б": ["b"], "в": ["v"], "г": ["g"], "д": ["d"],
@@ -101,7 +101,7 @@ def _reverse_transliterate(text: str) -> list[str]:
     return results
 
 
-# ─── Окно управления тегами ───────────────────────────────────────
+# --- Окно управления тегами ---------------------------------------------
 
 class TagManagerDialog(QDialog):
     """Отдельное окно для управления тегами."""
@@ -121,7 +121,7 @@ class TagManagerDialog(QDialog):
         outer = QVBoxLayout(self)
         outer.setSpacing(8)
 
-        # ── Группа: текущий элемент ──
+        # -- Группа: текущий элемент --
         grp_item = QGroupBox("Выделенный элемент")
         grp_item_layout = QVBoxLayout(grp_item)
         grp_item_layout.setSpacing(4)
@@ -162,7 +162,7 @@ class TagManagerDialog(QDialog):
 
         outer.addWidget(grp_item)
 
-        # ── Группа: фильтр ──
+        # -- Группа: фильтр --
         grp_filter = QGroupBox("Фильтр по тегу")
         grp_filter_layout = QHBoxLayout(grp_filter)
         grp_filter_layout.setSpacing(4)
@@ -290,7 +290,7 @@ class TagManagerDialog(QDialog):
         self._mt._do_filter()
 
 
-# ─── Основной виджет дерева ──────────────────────────────────────
+# --- Основной виджет дерева ---------------------------------------------
 
 class ModelTree(QWidget):
     """Иерархическое дерево .glb моделей с поиском, сортировкой и тегами."""
@@ -337,7 +337,7 @@ class ModelTree(QWidget):
         self._build_ui()
         self._load_tags()
 
-    # ─── UI ────────────────────────────────────────────────────────
+    # --- UI ---------------------------------------------------------------
 
     def _build_ui(self):
         layout = QVBoxLayout(self)
@@ -362,7 +362,7 @@ class ModelTree(QWidget):
         self.btn_tags.clicked.connect(self._open_tag_dialog)
         layout.addWidget(self.btn_tags)
 
-        # ─── Сортировка (компактная) ───────────────────────────────
+        # --- Сортировка (компактная) -----------------------------------
         sort_bar = QHBoxLayout()
         sort_bar.setSpacing(2)
         sort_bar.setContentsMargins(0, 0, 0, 0)
@@ -407,7 +407,7 @@ class ModelTree(QWidget):
         self.lbl_count.setStyleSheet("color: #888; font-size: 11px;")
         layout.addWidget(self.lbl_count)
 
-    # ─── Окно тегов ──────────────────────────────────────────────
+    # --- Окно тегов --------------------------------------------------
 
     def _open_tag_dialog(self):
         if self._tag_dialog is None or not self._tag_dialog.isVisible():
@@ -417,7 +417,7 @@ class ModelTree(QWidget):
         self._tag_dialog.raise_()
         self._tag_dialog.activateWindow()
 
-    # ─── Сортировка ───────────────────────────────────────────────
+    # --- Сортировка ---------------------------------------------------
 
     def _on_sort_changed(self, index: int):
         sort_map = {0: "name", 1: "size", 2: "date"}
@@ -444,7 +444,7 @@ class ModelTree(QWidget):
             )
         return paths
 
-    # ─── Теги: хранение ──────────────────────────────────────────
+    # --- Теги: хранение ---------------------------------------------
 
     def _load_tags(self):
         if os.path.isfile(self.TAGS_FILE):
@@ -543,7 +543,7 @@ class ModelTree(QWidget):
         """Все уникальные имена тегов для фильтра."""
         return sorted(self._get_all_tags())
 
-    # ─── Теги: вспомогательные ───────────────────────────────────
+    # --- Теги: вспомогательные -----------------------------------
 
     def _get_selected_item_info(self):
         """(path_or_folder, is_folder)."""
@@ -566,7 +566,7 @@ class ModelTree(QWidget):
         # Полный путь папки хранится в UserRole+1
         return item.data(0, Qt.ItemDataRole.UserRole + 1)
 
-    # ─── Поиск / Фильтрация ───────────────────────────────────────
+    # --- Поиск / Фильтрация -----------------------------------------
 
     def _on_search_text_changed(self, text: str):
         self._search_timer.start()
@@ -637,7 +637,7 @@ class ModelTree(QWidget):
             count += self._count_visible_files(child)
         return count
 
-    # ─── Публичные методы ────────────────────────────────────────
+    # --- Публичные методы -----------------------------------------
 
     def add_models(self, filepaths: list[str], root_dir: str = ""):
         if root_dir:
@@ -700,7 +700,7 @@ class ModelTree(QWidget):
     def root_dir(self, value: str):
         self._root_dir = value
 
-    # ─── Перестроение дерева ───────────────────────────────────────
+    # --- Перестроение дерева -----------------------------------------
 
     def _rebuild_tree(self):
         """Полная перестройка дерева с сортировкой и тегами."""
@@ -778,7 +778,7 @@ class ModelTree(QWidget):
         if self.search_edit.text().strip() or self._active_tag_filter or self._hide_reference:
             self._do_filter()
 
-    # ─── Внутренние методы ────────────────────────────────────────
+    # --- Внутренние методы -----------------------------------------
 
     def _find_or_create_child(self, parent: QTreeWidgetItem, name: str,
                                 is_folder: bool = False,
@@ -836,25 +836,7 @@ class ModelTree(QWidget):
     def set_hide_reference(self, hide: bool):
         """Показать/скрыть папки reference в дереве."""
         self._hide_reference = hide
-        # Всегда вызываем _do_filter(), чтобы учесть все активные фильтры
-        # (текстовый поиск, тег-фильтр и скрытие reference)
         self._do_filter()
-
-    def _expand_all(self, parent: QTreeWidgetItem):
-        """Рекурсивно развернуть все узлы дерева."""
-        parent.setExpanded(True)
-        for i in range(parent.childCount()):
-            self._expand_all(parent.child(i))
-
-    def _hide_ref_folders(self, parent: QTreeWidgetItem):
-        """Рекурсивно скрыть все папки с именем reference."""
-        for i in range(parent.childCount()):
-            child = parent.child(i)
-            text = child.text(0).strip().lstrip("\U0001F4C2 ").strip()
-            if text.lower() == "reference":
-                child.setHidden(True)
-            else:
-                self._hide_ref_folders(child)
 
     def _update_count(self):
         n = len(self._all_paths)
@@ -893,7 +875,6 @@ class ModelTree(QWidget):
             self.model_selected.emit(path)
         else:
             # Папка — ждём, не будет ли двойного клика
-            print(f"[Preview] Клик по папке: {item.text(0)}, запускаю таймер")
             self._pending_click_item = item
             self._click_timer.start()
 
@@ -920,13 +901,10 @@ class ModelTree(QWidget):
             return
 
         folder_path = self._get_folder_path_from_item(item)
-        print(f"[Preview] Клик по папке, путь: {folder_path}")
         if not folder_path:
-            print(f"[Preview] folder_path is None, item text: {item.text(0)}")
             return
 
         preview_dir = os.path.join(folder_path, "preview")
-        print(f"[Preview] Ищу preview: {preview_dir}, exists: {os.path.isdir(preview_dir)}")
         if not os.path.isdir(preview_dir):
             return
 
@@ -936,11 +914,10 @@ class ModelTree(QWidget):
             ext = os.path.splitext(fname)[1].lower()
             if ext in image_exts:
                 img_path = os.path.join(preview_dir, fname)
-                print(f"[Preview] Найдена картинка: {img_path}")
                 self.preview_requested.emit(img_path)
                 return
 
-    # ─── Контекстное меню (ПКМ) ──────────────────────────────────
+    # --- Контекстное меню (ПКМ) --------------------------------
 
     def _on_context_menu(self, pos):
         item = self.tree.itemAt(pos)
@@ -977,7 +954,7 @@ class ModelTree(QWidget):
             tags_menu = menu.addMenu("Теги")
             model_tags = self._get_model_tags(filepath)
             for tag in model_tags:
-                act = QAction(f"  ✕  {tag}", self)
+                act = QAction(f"  \u2715  {tag}", self)
                 act.triggered.connect(lambda t=tag: self._remove_tag_by_context(filepath, t))
                 tags_menu.addAction(act)
 
@@ -997,7 +974,7 @@ class ModelTree(QWidget):
             tags_menu = menu.addMenu("Теги папки")
             folder_tags = self._get_folder_own_tags(folder_path)
             for tag in folder_tags:
-                act = QAction(f"  ✕  {tag}", self)
+                act = QAction(f"  \u2715  {tag}", self)
                 act.triggered.connect(lambda t=tag: self._remove_tag_by_context_folder(folder_path, t))
                 tags_menu.addAction(act)
 
@@ -1066,7 +1043,7 @@ class ModelTree(QWidget):
         QApplication.clipboard().setText(text)
 
 
-# ─── Форматирование ──────────────────────────────────────────────
+# --- Форматирование ---------------------------------------------------
 
 def _format_size(size: int) -> str:
     if size < 1024:

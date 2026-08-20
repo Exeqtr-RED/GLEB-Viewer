@@ -32,7 +32,7 @@ class F3DWidget(QWidget):
         self._current_button = None
         self._pending_hdri_path = None  # HDRI, которую нужно применить после инициализации движка
 
-        # ── Управление камерой (сферическая орбита) ─────────────
+        # -- Управление камерой (сферическая орбита) ------------
         # Состояние камеры — источник правды. Движок только получает
         # эти значения через _apply_camera_to_engine().
         self._cam_azimuth = 0.0          # градусы, горизонтальный угол
@@ -93,9 +93,6 @@ class F3DWidget(QWidget):
             self.engine.window.size = (self.width(), self.height())
             print(f"[F3D] Движок создан (offscreen), версия {f3d.__version__}")
 
-            # Дамп доступных опций для отладки
-            self._dump_hdri_options()
-
             # Применить отложенную HDRI (если set_hdri вызван до init)
             if self._pending_hdri_path is not None:
                 print(f"[F3D] Применение отложенной HDRI: {os.path.basename(self._pending_hdri_path)}")
@@ -106,46 +103,7 @@ class F3DWidget(QWidget):
             self.error_occurred.emit(f"Не удалось создать F3D: {e}")
             self.engine = None
 
-    def _dump_hdri_options(self):
-        """Распечатать все опции, содержащие 'hdri' или 'background', для отладки."""
-        try:
-            all_opts = {}
-            for k in self.engine.options.keys():  # type: ignore[union-attr]
-                try:
-                    all_opts[k] = self.engine.options[k]  # type: ignore[optional]
-                except Exception:
-                    pass
-
-            hdri_opts = {k: v for k, v in all_opts.items() if "hdri" in k.lower()}
-            bg_opts = {k: v for k, v in all_opts.items() if "background" in k.lower() or "env" in k.lower()}
-
-            if hdri_opts:
-                print("[F3D] Опции HDRI:")
-                for k, v in hdri_opts.items():
-                    print(f"  {k} = {v}")
-            else:
-                print("[F3D] Опции с 'hdri' НЕ НАЙДЕНЫ!")
-
-            if bg_opts:
-                print("[F3D] Опции background/env:")
-                for k, v in bg_opts.items():
-                    print(f"  {k} = {v}")
-
-            # Печатаем первые 30 опций для ориентира
-            sample = list(all_opts.items())[:30]
-            print(f"[F3D] Всего опций: {len(all_opts)}, пример (первые 30):")
-            for k, v in sample:
-                print(f"  {k} = {v}")
-
-            # Дамп model.* опций (wireframe и т.д.)
-            model_opts = {k: v for k, v in all_opts.items() if k.startswith("model.")}
-            print(f"[F3D] Опции model.* ({len(model_opts)}):")
-            for k, v in model_opts.items():
-                print(f"  {k} = {v}")
-        except Exception as e:
-            print(f"[F3D] Ошибка дампа опций: {e}")
-
-    # ─── Цикл рендеринга ──────────────────────────────────────────
+    # --- Цикл рендеринга ---------------------------------------------
 
     def _start_loop(self):
         if not self._render_timer.isActive():
@@ -230,9 +188,6 @@ class F3DWidget(QWidget):
             print(f"[F3D] Ошибка сохранения скриншота: {e}")
             return False
 
-    def schedule_render(self):
-        self._render_frame()
-
     def _f3d_image_to_qimage(self, f3d_img) -> QImage:
         w = f3d_img.width
         h = f3d_img.height
@@ -251,7 +206,7 @@ class F3DWidget(QWidget):
 
         return QImage(arr.data.tobytes(), w, h, w * channels, fmt).copy()
 
-    # ─── paintEvent / resizeEvent ─────────────────────────────────
+    # --- paintEvent / resizeEvent -------------------------------------
 
     def paintEvent(self, event):
         painter = QPainter(self)
@@ -262,7 +217,7 @@ class F3DWidget(QWidget):
             painter.setPen(Qt.GlobalColor.white)
             painter.drawText(
                 self.rect(), Qt.AlignmentFlag.AlignCenter,
-                "Перетащите 3D модель сюда\nили Настройки → Открыть папку"
+                "Перетащите 3D модель сюда\nили Настройки -> Открыть папку"
             )
         painter.end()
 
@@ -272,7 +227,7 @@ class F3DWidget(QWidget):
             self.engine.window.size = (self.width(), self.height())
             self._render_frame()
 
-    # ─── Модели ───────────────────────────────────────────────────
+    # --- Модели ------------------------------------------------------
 
     def load_model(self, filepath: str, user_data=None) -> bool:
         self._init_engine()
@@ -333,7 +288,7 @@ class F3DWidget(QWidget):
             self._render_frame()
 
 
-    # ─── HDRI ─────────────────────────────────────────────────────
+    # --- HDRI -------------------------------------------------------
 
     def set_hdri(self, hdri_path: str | None) -> bool:
         """
@@ -419,7 +374,7 @@ class F3DWidget(QWidget):
             print(f"[F3D] HDRI ошибка: {e}")
             return False
 
-    # ─── Анимация ───────────────────────────────────────────────
+    # --- Анимация ---------------------------------------------------
 
     def play_animation(self):
         self._init_engine()
@@ -478,7 +433,7 @@ class F3DWidget(QWidget):
         except Exception as e:
             print(f"[F3D] Animation error: {e}")
 
-    # ─── Опции ────────────────────────────────────────────────────
+    # --- Опции -------------------------------------------------------
 
     def set_option(self, key: str, value):
         if not self.engine:
@@ -546,6 +501,7 @@ class F3DWidget(QWidget):
         except Exception as e:
             print(f"[F3D] get_all_options error: {e}")
         return result
+
     def _sync_camera_from_engine(self):
         """Прочитать текущее состояние камеры из движка в наши переменные.
         Вызывать после reset_to_bounds() и загрузки модели."""
@@ -626,12 +582,12 @@ class F3DWidget(QWidget):
 
         return right, up
 
-    # ─── Мышь → управление камерой ───────────────────────────────
+    # --- Мышь -> управление камерой -----------------------------------
     #
-    # ЛКМ (Left)          → Орбитальное вращение (orbit)
-    # Ср. кнопка (Middle)  → Панорамирование (pan)
-    # ПКМ (Right)          → Панорамирование (pan)
-    # Колёсико             → Зум (dolly)
+    # ЛКМ (Left)          -> Орбитальное вращение (orbit)
+    # Ср. кнопка (Middle)  -> Панорамирование (pan)
+    # ПКМ (Right)          -> Панорамирование (pan)
+    # Колёсико             -> Зум (dolly)
     #
     # Shift — режим точности (в 5 раз медленнее).
 
@@ -784,26 +740,7 @@ class F3DWidget(QWidget):
         self._idle_timer.start()
         super().keyReleaseEvent(event)
 
-    # ─── Cleanup ──────────────────────────────────────────────────
-
-    def _dump_all_options(self):
-        """Напечатать ВСЕ опции движка (клавиша D для отладки)."""
-        if not self.engine:
-            return
-        try:
-            keys = list(self.engine.options.keys())
-            print(f"\n[F3D] === ВСЕ ОПЦИИ ({len(keys)}) ===")
-            for k in sorted(keys):
-                try:
-                    v = self.engine.options[k]
-                    print(f"  {k} = {v}")
-                except Exception:
-                    print(f"  {k} = <ошибка чтения>")
-            print(f"[F3D] === КОНЕЦ СПИСКА ===\n")
-        except Exception as e:
-            print(f"[F3D] Ошибка дампа: {e}")
-
-    # ─── Публичные доступы ─────────────────────────────────────
+    # --- Публичные доступы -------------------------------------------
 
     @property
     def current_model_path(self) -> str | None:
