@@ -12,9 +12,10 @@ from PySide6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QTabWidget,
     QGroupBox, QFormLayout, QCheckBox, QComboBox,
     QDoubleSpinBox, QPushButton, QFileDialog, QLabel,
-    QWidget, QScrollArea, QSpinBox,
+    QWidget, QScrollArea, QSpinBox, QAbstractItemView,
     QListWidget, QMessageBox, QInputDialog,
 )
+from PySide6.QtCore import Qt
 
 from src.utils import resource_path
 
@@ -634,11 +635,8 @@ class F3DSettingsDialog(QDialog):
         cfg = self._collect_config()
         os.makedirs(CONFIGS_DIR, exist_ok=True)
         path = self._get_preset_path(name)
-        try:
-            self._atomic_write_json(path, cfg)
-        except OSError as e:
-            QMessageBox.warning(self, "Ошибка", f"Не удалось сохранить:\n{e}")
-            return
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(cfg, f, indent=2, ensure_ascii=False)
         self._refresh_presets_list()
         QMessageBox.information(self, "Сохранено", f"Конфиг сохранён:\n{name}")
 
@@ -680,14 +678,7 @@ class F3DSettingsDialog(QDialog):
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
         )
         if reply == QMessageBox.StandardButton.Yes:
-            try:
-                os.remove(self._get_preset_path(item.text()))
-            except OSError as e:
-                QMessageBox.warning(
-                    self, "Ошибка",
-                    f"Не удалось удалить файл конфига:\n{e}",
-                )
-                return
+            os.remove(self._get_preset_path(item.text()))
             self._refresh_presets_list()
 
     # ─── Экспорт / Импорт ────────────────────────────────────────
@@ -701,11 +692,9 @@ class F3DSettingsDialog(QDialog):
         cfg = self._collect_config()
         if not path.endswith(".json"):
             path += ".json"
-        try:
-            self._atomic_write_json(path, cfg)
-            QMessageBox.information(self, "Готово", f"Сохранено:\n{path}")
-        except OSError as e:
-            QMessageBox.warning(self, "Ошибка", f"Не удалось сохранить:\n{e}")
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(cfg, f, indent=2, ensure_ascii=False)
+        QMessageBox.information(self, "Готово", f"Сохранено:\n{path}")
 
     def _import_config(self):
         path, _ = QFileDialog.getOpenFileName(
@@ -723,27 +712,6 @@ class F3DSettingsDialog(QDialog):
     # ══════════════════════════════════════════════════════════════
     #  Применение настроек к движку
     # ══════════════════════════════════════════════════════════════
-
-    @staticmethod
-    def _atomic_write_json(path: str, data: dict) -> None:
-        """Атомарная запись JSON-файла: пишем во временный файл и
-        атомарно заменяем им основной. Если процесс упадёт посреди записи,
-        основной файл останется неповреждённым."""
-        tmp_path = path + ".tmp"
-        try:
-            directory = os.path.dirname(path) or "."
-            os.makedirs(directory, exist_ok=True)
-            with open(tmp_path, "w", encoding="utf-8") as f:
-                json.dump(data, f, indent=2, ensure_ascii=False)
-            os.replace(tmp_path, path)
-        except Exception:
-            # Подчистить tmp-файл, если остался
-            try:
-                if os.path.exists(tmp_path):
-                    os.remove(tmp_path)
-            except OSError:
-                pass
-            raise
 
     def _apply_only(self):
         self._apply_settings()

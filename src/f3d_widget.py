@@ -82,10 +82,6 @@ class F3DWidget(QWidget):
         self._render_timer.setInterval(16)
         self._render_timer.timeout.connect(self._render_frame)
 
-        # Кэш последнего размера окна F3D — чтобы не дёргать
-        # engine.window.size каждый кадр (иначе F3D может реаллоцировать framebuffer)
-        self._last_window_size: tuple[int, int] | None = None
-
         # Таймер остановки при бездействии
         self._idle_timer = QTimer(self)
         self._idle_timer.setSingleShot(True)
@@ -97,8 +93,7 @@ class F3DWidget(QWidget):
             return
         try:
             self.engine = f3d.Engine.create(offscreen=True)
-            self._last_window_size = (self.width(), self.height())
-            self.engine.window.size = self._last_window_size
+            self.engine.window.size = (self.width(), self.height())
             log.info(f"[F3D] Движок создан (offscreen), версия {f3d.__version__}")
 
             # Применить отложенную HDRI (если set_hdri вызван до init)
@@ -153,12 +148,7 @@ class F3DWidget(QWidget):
             if self._cam_synced:
                 self._apply_camera_to_engine()
 
-            # Обновляем размер окна F3D только при изменении — иначе
-            # движок может реаллоцировать framebuffer на каждом кадре.
-            new_size = (self.width(), self.height())
-            if new_size != self._last_window_size:
-                self.engine.window.size = new_size
-                self._last_window_size = new_size
+            self.engine.window.size = (self.width(), self.height())
             img = self.engine.window.render_to_image()
             if img is not None:
                 self._last_image = self._f3d_image_to_qimage(img)
@@ -191,13 +181,10 @@ class F3DWidget(QWidget):
             else:
                 return False
 
-            qimg = QImage(arr.tobytes(), w, h, w * channels, fmt)
+            qimg = QImage(arr.data.tobytes(), w, h, w * channels, fmt).copy()
             result = qimg.save(filepath)
             # Восстановить размер виджета и камеру
-            if self._last_window_size is not None:
-                self.engine.window.size = self._last_window_size
-            else:
-                self.engine.window.size = (self.width(), self.height())
+            self.engine.window.size = (self.width(), self.height())
             self._apply_camera_to_engine()
             return result
         except Exception as e:
@@ -210,9 +197,7 @@ class F3DWidget(QWidget):
         channels = f3d_img.channel_count
         arr = np.frombuffer(f3d_img.content, dtype=np.uint8).reshape((h, w, channels))
 
-        # OpenGL offscreen: origin в bottom-left — переворачиваем по вертикали.
-        # .copy() обязательна — np.flipud возвращает view, а нам нужен contiguous
-        # буфер, чтобы отдать его в QImage через tobytes().
+        # OpenGL offscreen: origin в bottom-left — переворачиваем по вертикали
         arr = np.flipud(arr).copy()
 
         if channels == 4:
@@ -222,10 +207,7 @@ class F3DWidget(QWidget):
         else:
             return QImage()
 
-        # tobytes() уже создаёт независимую bytes-строку — .copy() на QImage
-        # не нужен, тем более что QImage с bytes-аргументом не разделяет
-        # память с Python-объектом.
-        return QImage(arr.tobytes(), w, h, w * channels, fmt)
+        return QImage(arr.data.tobytes(), w, h, w * channels, fmt).copy()
 
     # --- paintEvent / resizeEvent -------------------------------------
 
@@ -321,26 +303,18 @@ class F3DWidget(QWidget):
         return self._apply_hdri_internal(hdri_path)
 
     def _apply_hdri_internal(self, hdri_path: str | None) -> bool:
-        """Внутренняя установка HDRI (движок должен существовать).
-
-        Перебираем кандидаты имён опции файла HDRI и пробуем ЗАПИСЬЮ —
-        если движок принял без исключения, ключ работает для применения
-        окружения. Проверка через ЧТЕНИЕ некорректна: ключ может иметь
-        дефолт (чтение проходит), но не принимать запись HDRI-файла для
-        применения окружения в текущей версии f3d.
-        """
+        """Внутренняя установка HDRI (движок должен существовать)."""
         if not self.engine:
             return False
         try:
             if hdri_path is not None:
-                # Пробуем разные варианты имён опций — f3d 3.5.0 использует
-                # render.hdri.file, но в других версиях имена могли отличаться.
-                # Проверяем ЗАПИСЬЮ: если движок принял — ключ работает.
+                # Пробуем разные варианты имён опций — f3d 3.5.0 может использовать другие
                 opt_names = [
                     "render.hdri.file",
                     "scene.background.hdri.file",
                     "background.hdri.file",
                 ]
+
                 file_set = False
                 for opt_name in opt_names:
                     try:
@@ -353,12 +327,9 @@ class F3DWidget(QWidget):
                         continue
 
                 if not file_set:
-                    # Последняя попытка: принудительная запись в стандартный ключ
-                    try:
-                        self.engine.options["render.hdri.file"] = hdri_path
-                        log.info("[F3D] HDRI файл установлен принудительно: render.hdri.file")
-                    except Exception as e2:
-                        log.warning(f"[F3D] Принудительная запись не удалась: {e2}")
+                    # Последняя попытка: принудительная запись
+                    self.engine.options["render.hdri.file"] = hdri_path
+                    log.info(f"[F3D] HDRI файл установлен принудительно: render.hdri.file")
 
                 # Включаем ambient и skybox (имена опций из f3d 3.5.0)
                 hdri_toggles = {
@@ -384,7 +355,7 @@ class F3DWidget(QWidget):
                 except Exception:
                     pass
                 self._render_frame()
-                log.info("[F3D] HDRI сброшена")
+                log.info(f"[F3D] HDRI сброшена")
                 return True
         except Exception as e:
             log.warning(f"[F3D] HDRI ошибка: {e}")
@@ -589,20 +560,15 @@ class F3DWidget(QWidget):
             return False
 
     def mousePressEvent(self, event):
-        # Ленивая инициализация движка при первом взаимодействии —
-        # не только на правый клик, но и на левый/средний, чтобы колесо
-        # и клавиатура тоже работали без явной загрузки модели.
-        if event.button() not in (
+        if not self.engine or event.button() not in (
             Qt.MouseButton.LeftButton,
             Qt.MouseButton.MiddleButton,
             Qt.MouseButton.RightButton,
         ):
             return
-        self._init_engine()
-        if not self.engine:
-            return
         if event.button() == Qt.MouseButton.RightButton:
             event.accept()
+        self._init_engine()
         self._last_mouse_pos = event.position()
         self._current_button = event.button()
         self._vel_azimuth = 0.0
@@ -661,11 +627,9 @@ class F3DWidget(QWidget):
         self._idle_timer.start()
 
     def wheelEvent(self, event):
-        # Ленивая инициализация — колёсико тоже должно создавать движок,
-        # не только клик/загрузка модели.
-        self._init_engine()
         if not self.engine or not self._cam_synced:
             return
+        self._init_engine()
         delta = event.angleDelta().y()
         invert = self._is_invert_zoom()
 
@@ -691,8 +655,6 @@ class F3DWidget(QWidget):
         self._start_loop()
 
     def keyPressEvent(self, event):
-        # Ленивая инициализация — клавиатура тоже должна создавать движок.
-        self._init_engine()
         if not self.engine or not self._cam_synced:
             return
         key = event.key()

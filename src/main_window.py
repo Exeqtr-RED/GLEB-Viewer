@@ -25,31 +25,6 @@ from src.utils import resource_path
 log = logging.getLogger(__name__)
 
 
-# Простой кэш QPixmap по пути к картинке. QApplication автоматически удаляет
-# QPixmap при выходе, поэтому кэш не нужно чистить вручную. Ограничиваем
-# числом записей, чтобы не занимать много памяти для больших галерей.
-_PIXMAP_CACHE: dict[str, QPixmap] = {}
-_PIXMAP_CACHE_MAX = 128
-
-
-def _cached_pixmap(path: str) -> QPixmap:
-    """Вернуть QPixmap из кэша, при промахе — загрузить с диска и закэшировать.
-    Возвращает null QPixmap, если файл не читается."""
-    pix = _PIXMAP_CACHE.get(path)
-    if pix is not None:
-        return pix
-    pix = QPixmap(path)
-    if pix.isNull():
-        return pix  # не кэшируем null, чтобы ретраи работали
-    if len(_PIXMAP_CACHE) >= _PIXMAP_CACHE_MAX:
-        # Простая LRU-эвикация: выкинуть первый попавшийся элемент.
-        # QPixmap лёгкий (разделяет данные с GPU), так что это дёшево.
-        first_key = next(iter(_PIXMAP_CACHE))
-        _PIXMAP_CACHE.pop(first_key, None)
-    _PIXMAP_CACHE[path] = pix
-    return pix
-
-
 # Путь к папке с темами
 THEMES_DIR = resource_path("themes")
 
@@ -366,17 +341,12 @@ class MainWindow(QMainWindow):
 
     def _on_preview_requested(self, image_path: str):
         """Показать картинку превью поверх f3d виджета."""
-        pixmap = _cached_pixmap(image_path)
+        pixmap = QPixmap(image_path)
         if pixmap.isNull():
             log.debug(f"[Preview] QPixmap isNull для: {image_path}")
             return
         self._full_view_container.hide()
         self._ref_scroll.hide()
-        # Чистим старые ячейки галереи, чтобы они не висели скрытыми в памяти
-        while self._ref_gallery_layout.count():
-            child = self._ref_gallery_layout.takeAt(0)
-            if child.widget():
-                child.widget().deleteLater()
         self._preview_label.setScaledContents(False)
         self._preview_label.setPixmap(pixmap.scaled(
             self._preview_label.size(),
@@ -431,7 +401,7 @@ class MainWindow(QMainWindow):
             lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
             lbl.setScaledContents(False)
             lbl.setMinimumSize(1, 1)
-            pixmap = _cached_pixmap(img_path)
+            pixmap = QPixmap(img_path)
             if not pixmap.isNull():
                 lbl.setPixmap(pixmap.scaled(
                     cell_w - 8, cell_h - 8,
@@ -448,7 +418,7 @@ class MainWindow(QMainWindow):
 
     def _show_full_view(self, image_path: str):
         """Показать картинку во весь экран (поверх галереи)."""
-        pixmap = _cached_pixmap(image_path)
+        pixmap = QPixmap(image_path)
         if pixmap.isNull():
             return
         target_size = self._full_view_label.size()
@@ -479,13 +449,7 @@ class MainWindow(QMainWindow):
         self.statusBar().showMessage(f"Reference папки: {'скрыты' if checked else 'отображены'}")
 
     def _apply_hdri_by_path(self, filepath: str):
-        """Определить категорию модели по пути и применить соответствующую HDRI.
-
-        Если в пути найдена категория (kosmos/voda/vozduh/zemlya) — применяем
-        соответствующую HDRI как фон. Если категория не найдена или HDRI-файл
-        пропал — НЕ сбрасываем HDRI: оставляем ранее применённую, чтобы фон
-        оставался видимым при навигации между моделями одной категории.
-        """
+        """Определить категорию модели по пути и применить соответствующую HDRI."""
         # Разбираем путь на компоненты и ищем совпадение с категориями
         parts = os.path.normpath(filepath).lower().split(os.sep)
         hdri_name = None
@@ -566,17 +530,8 @@ class MainWindow(QMainWindow):
     # --- Пакетный менеджер -----------------------------------------------
 
     def _batch_screenshots(self):
-        """Создать скриншоты для всех моделей из дерева.
-
-        Реализовано как пошаговый конечный автомат на QTimer.singleShot(0, ...),
-        а не как блокирующий цикл с QApplication.processEvents(). Это убирает
-        реентерабельность (главный антипаттерн Qt) и не блокирует UI:
-        между шагами Qt event loop обрабатывает события normally.
-
-        F3D-движок нельзя выносить в QThread — это OpenGL-контекст, привязанный
-        к потоку, который его создал.
-        """
-        from PySide6.QtCore import QTimer
+        """Создать скриншоты для всех моделей из дерева."""
+        from PySide6.QtWidgets import QApplication
 
         paths = self.model_tree.get_all_paths()
         if not paths:
@@ -601,117 +556,75 @@ class MainWindow(QMainWindow):
             return
 
         shot_size = sizes[size_name]
+        total = len(paths)
 
         # Убеждаемся, что движок инициализирован
         if not self.f3d_widget.ensure_engine():
             QMessageBox.warning(self, "Ошибка", "Не удалось инициализировать F3D движок.")
             return
 
-        # Блокируем дерево на время batch, чтобы пользователь не мог кликнуть
-        # другую модель и сломать текущий скриншот.
-        self.model_tree.setEnabled(False)
-
         progress = QProgressDialog(
             "Создание скриншотов...", "Отмена",
-            0, len(paths), self
+            0, total, self
         )
         progress.setWindowTitle("Пакетный менеджер")
         progress.setMinimumDuration(0)
         progress.setFixedWidth(400)
-        progress.canceled.connect(self._on_batch_cancel)
 
-        self._batch_state = {
-            "paths": paths,
-            "i": 0,
-            "saved": 0,
-            "skipped": 0,
-            "errors": 0,
-            "error_list": [],
-            "shot_size": shot_size,
-            "cancelled": False,
-            "progress": progress,
-        }
-        # Запускаем первый шаг в следующей итерации event loop — это даёт Qt
-        # шанс показать диалог прогресса до начала тяжёлой работы.
-        QTimer.singleShot(0, self._batch_step)
+        saved = 0
+        skipped = 0
+        errors = 0
+        error_list = []
 
-    def _on_batch_cancel(self):
-        """Пользователь нажал «Отмена» — помечаем состояние, шаг сам остановится."""
-        if hasattr(self, "_batch_state") and self._batch_state is not None:
-            self._batch_state["cancelled"] = True
+        for i, filepath in enumerate(paths):
+            if progress.wasCanceled():
+                break
 
-    def _batch_step(self):
-        """Один шаг пакетного создания скриншотов: одна модель."""
-        state = self._batch_state
-        if state is None:
-            return
-        if state["cancelled"] or state["i"] >= len(state["paths"]):
-            self._batch_finalize()
-            return
-
-        i = state["i"]
-        filepath = state["paths"][i]
-        name = os.path.splitext(os.path.basename(filepath))[0]
-        progress = state["progress"]
-        if progress.wasCanceled():
-            state["cancelled"] = True
-            self._batch_finalize()
-            return
-
-        progress.setLabelText(f"{i + 1} / {len(state['paths'])}\n{name}")
-        progress.setValue(i)
-
-        try:
+            name = os.path.splitext(os.path.basename(filepath))[0]
             preview_dir = os.path.join(os.path.dirname(filepath), "preview")
             os.makedirs(preview_dir, exist_ok=True)
             out_path = os.path.join(preview_dir, name + ".png")
 
-            self.f3d_widget.clear_scene()
-            self._apply_hdri_by_path(filepath)
-            if not self.f3d_widget.load_model(filepath):
-                log.debug(f"[Batch] Пропуск (не поддерживается): {filepath}")
-                state["skipped"] += 1
-            else:
+            progress.setLabelText(f"{i + 1} / {total}\n{name}")
+            progress.setValue(i)
+            QApplication.processEvents()
+
+            if progress.wasCanceled():
+                break
+
+            try:
+                # Загрузить модель
+                self.f3d_widget.clear_scene()
+                self._apply_hdri_by_path(filepath)
+                if not self.f3d_widget.load_model(filepath):
+                    log.debug(f"[Batch] Пропуск (не поддерживается): {filepath}")
+                    skipped += 1
+                    continue
+
+                # Настроить камеру
                 self.f3d_widget.reset_camera()
-                if self.f3d_widget.render_to_file(out_path, size=state["shot_size"]):
-                    state["saved"] += 1
+
+                # Сохранить скриншот
+                if self.f3d_widget.render_to_file(out_path, size=shot_size):
+                    saved += 1
                 else:
-                    state["errors"] += 1
-                    state["error_list"].append(f"{name}: ошибка сохранения")
-        except Exception as e:
-            state["errors"] += 1
-            state["error_list"].append(f"{name}: {e}")
-            log.warning(f"[Batch] Ошибка: {name} - {e}")
+                    errors += 1
+                    error_list.append(f"{name}: ошибка сохранения")
 
-        state["i"] += 1
-        # Планируем следующий шаг. QTimer.singleShot(0, ...) отдаёт управление
-        # в event loop, между шагами Qt обработает все pending-события,
-        # включая отрисовку прогресс-диалога и обработку кнопки «Отмена».
-        from PySide6.QtCore import QTimer
-        QTimer.singleShot(0, self._batch_step)
+                QApplication.processEvents()
 
-    def _batch_finalize(self):
-        """Завершение batch: показ итогового диалога и восстановление UI."""
-        state = self._batch_state
-        if state is None:
-            return
-        self._batch_state = None
-        progress = state["progress"]
-        try:
-            progress.canceled.disconnect(self._on_batch_cancel)
-        except (TypeError, RuntimeError):
-            pass
-        progress.setValue(len(state["paths"]))
+            except Exception as e:
+                errors += 1
+                error_list.append(f"{name}: {e}")
+                log.warning(f"[Batch] Ошибка: {name} - {e}")
+
+        progress.setValue(total)
         progress.close()
 
-        # Восстановить UI: очистить сцену и разблокировать дерево
+        # Восстановить UI: очистить сцену и отрендерить пустой кадр
         self.f3d_widget.clear_scene()
-        self.model_tree.setEnabled(True)
 
-        saved = state["saved"]
-        skipped = state["skipped"]
-        errors = state["errors"]
-        error_list = state["error_list"]
+        # Итог
         msg = f"Сохранено: {saved}\nПропущено: {skipped}\nОшибок: {errors}"
         if error_list:
             msg += "\n\nОшибки:\n" + "\n".join(error_list[:20])
@@ -775,29 +688,11 @@ class MainWindow(QMainWindow):
 
     def dropEvent(self, event: QDropEvent):
         urls = event.mimeData().urls()
-        if not urls:
-            return
-        any_handled = False
         for url in urls:
             filepath = url.toLocalFile()
-            if not filepath:
-                continue
-            if os.path.isdir(filepath):
-                # Дроп папки — загрузить все .glb из неё (рекурсивно)
-                self._settings.setValue("last_directory", filepath)
-                self._last_dir = filepath
-                # Очистить старый список перед загрузкой новой папки
-                self.model_tree.clear_all()
-                count = self._scan_and_load_directory(filepath)
-                self.statusBar().showMessage(f"Найдено моделей: {count} в {filepath}")
-                any_handled = True
-            elif os.path.isfile(filepath):
-                # Дроп файла — загрузить как модель
+            if filepath:
                 self._do_load_model(filepath)
-                any_handled = True
-            else:
-                log.warning(f"[Drop] Путь не существует: {filepath}")
-        if any_handled:
+        if urls:
             event.acceptProposedAction()
 
     # --- Close ------------------------------------------------------------
@@ -806,10 +701,6 @@ class MainWindow(QMainWindow):
         super().resizeEvent(event)
         if self._preview_container.isVisible():
             self._preview_container.resize(self.f3d_widget.size())
-        # Полный просмотр картинки тоже должен следовать за размером f3d виджета,
-        # иначе при ресайзе окна пользователь видит обрезанный full-view.
-        if self._full_view_container.isVisible():
-            self._full_view_container.resize(self.f3d_widget.size())
 
     def closeEvent(self, event):
         self.f3d_widget.cleanup()
