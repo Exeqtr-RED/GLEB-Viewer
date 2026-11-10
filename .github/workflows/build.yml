@@ -1,16 +1,25 @@
-name: Build Windows EXE
+name: Build GLEB Viewer
 
 on:
   push:
+    branches:
+      - main
     tags:
       - 'v*'
+  # pull_request на main не собираем по решению пользователя —
+  # только push в main (проверка сборки) и теги v* (релиз).
 
 permissions:
-  contents: write
+  contents: write   # нужен для создания Release при тегах
 
 jobs:
   build:
-    runs-on: windows-latest
+    name: Build (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false   # один упавший билд не отменяет остальные
+      matrix:
+        os: [windows-latest, ubuntu-latest]
 
     steps:
       - name: Checkout
@@ -20,32 +29,119 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: '3.11'
+          cache: 'pip'   # кэширует wheels между запусками
 
-      - name: Install dependencies
+      # --- Linux: системные библиотеки для Qt offscreen + UPX ---
+      - name: Install Linux system deps
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libegl1 libgl1 libxkbcommon0 libdbus-1-3 \
+            libxcb-cursor0 libxcb-icccm4 libxcb-image0 libxcb-keysyms1 \
+            libxcb-render-util0 libxcb-shape0 libxcb-xinerama0 libxcb-xkb1 \
+            libfontconfig1 libfreetype6 \
+            upx-ucl
+          echo "UPX_PATH=/usr/bin/upx" >> $GITHUB_ENV
+
+      # --- Windows: UPX через Chocolatey ---
+      - name: Install UPX (Windows)
+        if: runner.os == 'Windows'
+        run: |
+          choco install upx -y --no-progress
+          echo "UPX_PATH=C:\ProgramData\chocolatey\bin\upx.exe" >> $env:GITHUB_ENV
+
+      - name: Install Python dependencies
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
           pip install pyinstaller
 
-      - name: Install UPX
-        run: |
-          choco install upx -y
-          echo "UPX_PATH=C:\ProgramData\chocolatey\bin\upx.exe" >> $env:GITHUB_ENV
-
+      # --- Сборка (один шаг для обеих платформ, spec-файл кроссплатформенный) ---
       - name: Build with PyInstaller
-        run: |
-          pyinstaller GLEB_Viewer.spec --noconfirm
+        run: pyinstaller GLEB_Viewer.spec --noconfirm
 
-      - name: Zip artifact
+      # --- Упаковка артефакта ---
+      # На Windows: .exe, на Linux: ELF-бинарь без расширения.
+      # В имени архива включаем платформу, чтобы не путать в релизе.
+      - name: Pack artifact (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
         run: |
-          Compress-Archive -Path "dist\GLEB_Viewer" -DestinationPath "GLEB_Viewer-${{ github.ref_name }}.zip"
+          $ver = '${{ github.ref_name }}'
+          if (-not $ver) { $ver = 'dev' }
+          $out = "GLEB_Viewer-$ver-windows.zip"
+          Compress-Archive -Path "dist\GLEB_Viewer.exe" -DestinationPath $out
+          echo "ARTIFACT_PATH=$out" >> $env:GITHUB_ENV
+          echo "ARTIFACT_NAME=GLEB_Viewer-$ver-windows.zip" >> $env:GITHUB_ENV
 
+      - name: Pack artifact (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          VER='${{ github.ref_name }}'
+          [ -z "$VER" ] && VER='dev'
+          OUT="GLEB_Viewer-$VER-linux.tar.gz"
+          # Упаковываем бинарник из dist/
+          tar -czf "$OUT" -C dist GLEB_Viewer
+          echo "ARTIFACT_PATH=$OUT" >> $GITHUB_ENV
+          echo "ARTIFACT_NAME=$OUT" >> $GITHUB_ENV
+
+      # --- Загрузка артефакта в job ---
+      # Используется и для dev-билда (доступен в Actions UI),
+      # и для передачи в release job.
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-${{ runner.os }}
+          path: ${{ env.ARTIFACT_PATH }}
+          retention-days: 14
+          if-no-files-found: error
+
+  # --- Release job: один на все платформы, избегаем гонки при matrix build ---
+  # Зависит от build, скачивает все артефакты и создаёт единый Release.
+  release:
+    name: Create GitHub Release
+    needs: build   # ждать оба билда
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # Скачиваем оба артефакта (windows + linux) из build job
+      - name: Download Windows artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: build-Windows
+          path: release-artifacts
+
+      - name: Download Linux artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: build-Linux
+          path: release-artifacts
+
+      - name: List release artifacts
+        run: ls -la release-artifacts/
+
+      # Один action-gh-release для всех файлов — нет гонки.
       - name: Create Release and upload
         uses: softprops/action-gh-release@v2
         with:
           name: GLEB Viewer ${{ github.ref_name }}
           body: |
             Автоматическая сборка из тега `${{ github.ref_name }}`
+
+            **Платформы:**
+            - Windows: `.zip` с одним `.exe` (onefile)
+            - Linux: `.tar.gz` с одним ELF-бинарём
+
             **Коммит:** ${{ github.sha }}
-          files: GLEB_Viewer-${{ github.ref_name }}.zip
+
+            Установка:
+            - Windows: распаковать zip, запустить `GLEB_Viewer.exe`
+            - Linux: `tar xzf GLEB_Viewer-*-linux.tar.gz && ./GLEB_Viewer`
+              (нужны системные libEGL/libGL, см. README)
+          files: release-artifacts/*
           generate_release_notes: true

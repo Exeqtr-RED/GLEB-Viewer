@@ -5,18 +5,20 @@
 """
 
 import json
+import logging
 import os
 
 from PySide6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QTabWidget,
     QGroupBox, QFormLayout, QCheckBox, QComboBox,
     QDoubleSpinBox, QPushButton, QFileDialog, QLabel,
-    QWidget, QScrollArea, QSpinBox, QAbstractItemView,
+    QWidget, QScrollArea, QSpinBox,
     QListWidget, QMessageBox, QInputDialog,
 )
-from PySide6.QtCore import Qt
 
 from src.utils import resource_path
+
+log = logging.getLogger(__name__)
 
 
 # Путь к папке с конфигами (рядом с программой)
@@ -675,7 +677,14 @@ class F3DSettingsDialog(QDialog):
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
         )
         if reply == QMessageBox.StandardButton.Yes:
-            os.remove(self._get_preset_path(item.text()))
+            try:
+                os.remove(self._get_preset_path(item.text()))
+            except OSError as e:
+                QMessageBox.warning(
+                    self, "Ошибка",
+                    f"Не удалось удалить файл конфига:\n{e}",
+                )
+                return
             self._refresh_presets_list()
 
     # ─── Экспорт / Импорт ────────────────────────────────────────
@@ -775,4 +784,4 @@ class F3DSettingsDialog(QDialog):
             else:
                 failed += 1
 
-        print(f"[Settings] Применено: {applied}, ошибок: {failed}")
+        log.debug(f"[Settings] Применено: {applied}, ошибок: {failed}")

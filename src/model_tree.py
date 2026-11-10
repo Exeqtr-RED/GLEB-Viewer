@@ -9,16 +9,33 @@
 import os
 import re
 import json
+import logging
 from datetime import datetime
 
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QTreeWidget, QTreeWidgetItem,
     QLabel, QAbstractItemView, QLineEdit, QMenu, QComboBox,
     QPushButton, QInputDialog, QHBoxLayout, QFrame, QSizePolicy,
-    QDialog, QGroupBox, QScrollArea,
+    QDialog, QGroupBox,
 )
 from PySide6.QtCore import Qt, Signal, QTimer
-from PySide6.QtGui import QAction, QPixmap
+from PySide6.QtGui import QAction
+
+log = logging.getLogger(__name__)
+
+
+# Префикс-эмодзи для папок в дереве (📁).
+# Используется единая константа, чтобы избежать разброда через lstrip()
+# (lstrip удаляет любой из перечисленных символов, а не префикс целиком).
+FOLDER_PREFIX = "\U0001F4C2 "
+
+
+def _strip_folder_prefix(text: str) -> str:
+    """Снять префикс-эмодзи папки, если он есть. В отличие от lstrip,
+    не отрезает пробелы из оригинального имени папки."""
+    if text.startswith(FOLDER_PREFIX):
+        return text[len(FOLDER_PREFIX):]
+    return text
 
 
 # --- Таблица транслитерации ---------------------------------------------
@@ -43,6 +60,14 @@ for _cyr, _lat_variants in _TRANSLIT_MULTI.items():
 
 
 def transliterate(text: str) -> list[str]:
+    """Транслитерация кириллицы в латиницу с раскрытием вариантов.
+
+    Возвращает несколько вариантов (т.к. у одной буквы может быть несколько
+    вариантов). Чтобы не допустить комбинаторного взрыва (для длинных строк
+    с буквами «е», «у», «ф», «ч», «щ», «ю», «я» количество растёт как 2^k),
+    обрезаем варианты при превышении MAX_VARIANTS.
+    """
+    MAX_VARIANTS = 64
     lower = text.lower()
     if not any("\u0400" <= ch <= "\u04FF" for ch in lower):
         return [lower]
@@ -53,9 +78,16 @@ def transliterate(text: str) -> list[str]:
             for prefix in variants:
                 for lat in _TRANSLIT_MULTI[ch]:
                     new_variants.append(prefix + lat)
+                    if len(new_variants) >= MAX_VARIANTS:
+                        break
+                if len(new_variants) >= MAX_VARIANTS:
+                    break
             variants = new_variants
         else:
             variants = [v + ch for v in variants]
+        if len(variants) >= MAX_VARIANTS:
+            # Дальше множить варианты бессмысленно — они уже не влезут в поиск.
+            break
     return variants
 
 
@@ -269,7 +301,20 @@ class TagManagerDialog(QDialog):
                             folder = os.path.join(self._mt._root_dir, *parts[:i + 1])
                             ft = self._mt._get_folder_own_tags(folder)
                             if tag in ft:
-                                self._mt._remove_tag_from_folder(folder, tag)
+                                # Тег наследуется от папки — сняв его, мы затронем
+                                # ВСЕ модели в этой папке. Спросим подтверждение.
+                                from PySide6.QtWidgets import QMessageBox
+                                reply = QMessageBox.question(
+                                    self,
+                                    "Подтвердите удаление",
+                                    f"Тег «{tag}» унаследован от папки:\n"
+                                    f"{os.path.basename(folder)}\n\n"
+                                    f"Удаление затронет все модели в этой папке.\n"
+                                    f"Продолжить?",
+                                    QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                                )
+                                if reply == QMessageBox.StandardButton.Yes:
+                                    self._mt._remove_tag_from_folder(folder, tag)
                                 break
                     except ValueError:
                         pass
@@ -312,6 +357,9 @@ class ModelTree(QWidget):
         self._file_meta: dict[str, dict] = {}   # path -> {"size": int, "mtime": float}
         self._tags: dict[str, list[str]] = {}    # path -> [tag1, tag2, ...]
         self._folder_tags: dict[str, list[str]] = {}  # folder_path -> [tag1, ...]
+        # Кэш тегов моделей: path -> [tag1, ...] (с унаследованными).
+        # Инвалидируется при любом изменении _tags или _folder_tags.
+        self._model_tags_cache: dict[str, list[str]] = {}
         self._active_tag_filter: str | None = None
         self._sort_by = "name"   # "name" | "size" | "date"
         self._sort_asc = True
@@ -410,8 +458,14 @@ class ModelTree(QWidget):
     # --- Окно тегов --------------------------------------------------
 
     def _open_tag_dialog(self):
-        if self._tag_dialog is None or not self._tag_dialog.isVisible():
-            self._tag_dialog = TagManagerDialog(self, self.window())
+        # Удаляем старый диалог, чтобы не копить скрытые экземпляры
+        # (по умолчанию close() только прячет окно, не уничтожает его).
+        if self._tag_dialog is not None:
+            self._tag_dialog.deleteLater()
+            self._tag_dialog = None
+        self._tag_dialog = TagManagerDialog(self, self.window())
+        # Чтобы диалог удалялся GC после закрытия, а не висел скрытым
+        self._tag_dialog.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose, True)
         self._tag_dialog.refresh()
         self._tag_dialog.show()
         self._tag_dialog.raise_()
@@ -454,21 +508,47 @@ class ModelTree(QWidget):
                     self._tags = data.get("files", {})
                     self._folder_tags = data.get("folders", {})
             except Exception as e:
-                print(f"[Tags] Ошибка загрузки: {e}")
+                log.warning(f"[Tags] Ошибка загрузки: {e}")
                 self._tags = {}
                 self._folder_tags = {}
+            self._invalidate_tags_cache()
 
     def _save_tags(self):
+        """Атомарная запись tags.json: пишем во временный файл и
+        атомарно заменяем им основной. Если процесс упадёт посреди записи,
+        основной файл останется неповреждённым."""
         try:
-            os.makedirs(os.path.dirname(self.TAGS_FILE) or ".", exist_ok=True)
-            with open(self.TAGS_FILE, "w", encoding="utf-8") as f:
+            directory = os.path.dirname(self.TAGS_FILE) or "."
+            os.makedirs(directory, exist_ok=True)
+            tmp_path = self.TAGS_FILE + ".tmp"
+            with open(tmp_path, "w", encoding="utf-8") as f:
                 json.dump({"files": self._tags, "folders": self._folder_tags},
                           f, indent=2, ensure_ascii=False)
+            # os.replace атомарна на POSIX и Windows.
+            os.replace(tmp_path, self.TAGS_FILE)
         except Exception as e:
-            print(f"[Tags] Ошибка сохранения: {e}")
+            log.warning(f"[Tags] Ошибка сохранения: {e}")
+            # Подчистить tmp-файл, если остался
+            try:
+                if os.path.exists(tmp_path):
+                    os.remove(tmp_path)
+            except OSError:
+                pass
+
+    def _invalidate_tags_cache(self) -> None:
+        """Сбросить кэш тегов моделей — вызывать при любом изменении
+        _tags или _folder_tags."""
+        self._model_tags_cache.clear()
 
     def _get_model_tags(self, path: str) -> list[str]:
-        """Теги модели: свои + теги родительских папок."""
+        """Теги модели: свои + теги родительских папок.
+
+        Результат кэшируется в _model_tags_cache (инвалидируется при
+        изменении тегов через _add_tag_* / _remove_tag_*).
+        """
+        cached = self._model_tags_cache.get(path)
+        if cached is not None:
+            return cached
         model_tags = list(self._tags.get(path, []))
         # Добавляем теги папок из пути
         if self._root_dir:
@@ -483,6 +563,8 @@ class ModelTree(QWidget):
                             model_tags.append(t)
             except ValueError:
                 pass
+        # Сохраняем копию в кэш, чтобы наружу не отдали мутированный список.
+        self._model_tags_cache[path] = list(model_tags)
         return model_tags
 
     def _get_own_tags(self, path: str) -> list[str]:
@@ -498,6 +580,7 @@ class ModelTree(QWidget):
             self._tags[path] = []
         if tag not in self._tags[path]:
             self._tags[path].append(tag)
+            self._invalidate_tags_cache()
             self._save_tags()
             self._rebuild_tree()
             self.tags_changed.emit()
@@ -507,6 +590,7 @@ class ModelTree(QWidget):
             self._tags[path].remove(tag)
             if not self._tags[path]:
                 del self._tags[path]
+            self._invalidate_tags_cache()
             self._save_tags()
             self._rebuild_tree()
             self.tags_changed.emit()
@@ -517,6 +601,7 @@ class ModelTree(QWidget):
             self._folder_tags[folder_path] = []
         if tag not in self._folder_tags[folder_path]:
             self._folder_tags[folder_path].append(tag)
+            self._invalidate_tags_cache()
             self._save_tags()
             self._rebuild_tree()
             self.tags_changed.emit()
@@ -527,6 +612,7 @@ class ModelTree(QWidget):
             self._folder_tags[folder_path].remove(tag)
             if not self._folder_tags[folder_path]:
                 del self._folder_tags[folder_path]
+            self._invalidate_tags_cache()
             self._save_tags()
             self._rebuild_tree()
             self.tags_changed.emit()
@@ -593,7 +679,7 @@ class ModelTree(QWidget):
         for i in range(parent.childCount()):
             child = parent.child(i)
             text = child.text(0).strip()
-            clean_text = text.lstrip("\U0001F4C2 ").strip()
+            clean_text = _strip_folder_prefix(text).strip()
             path = child.data(0, Qt.ItemDataRole.UserRole)
 
             # Тег-фильтр (только для файлов)
@@ -619,12 +705,6 @@ class ModelTree(QWidget):
             if visible:
                 has_visible = True
         return has_visible
-
-    def _show_all_items(self, parent: QTreeWidgetItem):
-        for i in range(parent.childCount()):
-            child = parent.child(i)
-            child.setHidden(False)
-            self._show_all_items(child)
 
     def _count_visible_files(self, parent: QTreeWidgetItem) -> int:
         count = 0
@@ -674,13 +754,11 @@ class ModelTree(QWidget):
         if added > 0:
             self._rebuild_tree()
 
-    def add_model(self, filepath: str, root_dir: str = ""):
-        self.add_models([filepath], root_dir)
-
     def clear_all(self):
         self._all_paths.clear()
         self._ref_folders.clear()
         self._file_meta.clear()
+        self._invalidate_tags_cache()
         self.tree.clear()
         self._root_dir = ""
         self.header.setText("Модели (.glb)")
@@ -786,9 +864,9 @@ class ModelTree(QWidget):
         for i in range(parent.childCount()):
             child = parent.child(i)
             child_text = child.text(0).strip()
-            if child_text == name or child_text == f"\U0001F4C2 {name}":
+            if child_text == name or child_text == FOLDER_PREFIX + name:
                 return child
-        display = f"\U0001F4C2 {name}" if is_folder else name
+        display = FOLDER_PREFIX + name if is_folder else name
         item = QTreeWidgetItem(parent, [display])
         item.setFirstColumnSpanned(True)
         if is_folder:
@@ -802,7 +880,7 @@ class ModelTree(QWidget):
         for i in range(parent.childCount()):
             child = parent.child(i)
             if child.data(0, Qt.ItemDataRole.UserRole) is None:
-                name = child.text(0).strip().lstrip("\U0001F4C2 ").strip()
+                name = _strip_folder_prefix(child.text(0).strip()).strip()
                 path_lower = (prefix + name).lower()
                 out.add(path_lower)
                 self._collect_folder_names(child, out, path_lower + os.sep)
@@ -820,7 +898,7 @@ class ModelTree(QWidget):
 
         # Сортируем папки по имени (с учётом направления сортировки)
         folders.sort(
-            key=lambda item: item.text(0).strip().lstrip("\U0001F4C2 ").strip().lower(),
+            key=lambda item: _strip_folder_prefix(item.text(0).strip()).strip().lower(),
             reverse=not self._sort_asc,
         )
 
@@ -1035,7 +1113,7 @@ class ModelTree(QWidget):
             else:
                 subprocess.run(["xdg-open", os.path.dirname(filepath)], check=False)
         except Exception as e:
-            print(f"[Tree] Ошибка открытия проводника: {e}")
+            log.warning(f"[Tree] Ошибка открытия проводника: {e}")
 
     @staticmethod
     def _copy_to_clipboard(text: str):
