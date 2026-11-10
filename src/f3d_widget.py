@@ -34,10 +34,6 @@ class F3DWidget(QWidget):
         self._last_mouse_pos = None
         self._current_button = None
         self._pending_hdri_path = None  # HDRI, которую нужно применить после инициализации движка
-        # Ключ опции HDRI, который работает в текущей версии f3d — определяется
-        # один раз при _init_engine, чтобы не перебирать три варианта на каждом
-        # вызове _apply_hdri_internal.
-        self._hdri_file_key: str | None = None
 
         # -- Управление камерой (сферическая орбита) ------------
         # Состояние камеры — источник правды. Движок только получает
@@ -105,10 +101,6 @@ class F3DWidget(QWidget):
             self.engine.window.size = self._last_window_size
             log.info(f"[F3D] Движок создан (offscreen), версия {f3d.__version__}")
 
-            # Один раз определить рабочий ключ опции HDRI для текущей версии f3d
-            # (имена могли отличаться между версиями). Дальше используем только его.
-            self._detect_hdri_key()
-
             # Применить отложенную HDRI (если set_hdri вызван до init)
             if self._pending_hdri_path is not None:
                 log.info(f"[F3D] Применение отложенной HDRI: {os.path.basename(self._pending_hdri_path)}")
@@ -118,33 +110,6 @@ class F3DWidget(QWidget):
             log.warning(f"[F3D] Ошибка создания движка: {e}")
             self.error_occurred.emit(f"Не удалось создать F3D: {e}")
             self.engine = None
-
-    def _detect_hdri_key(self) -> None:
-        """Определить, какой ключ опции HDRI работает в текущей версии f3d.
-        Записывает найденный ключ в self._hdri_file_key."""
-        if not self.engine or self._hdri_file_key is not None:
-            return
-        # Перебираем кандидатов в порядке предпочтения. Запись/чтение значения
-        # подряд — если движок принял без исключения, ключ работает.
-        candidates = [
-            "render.hdri.file",
-            "scene.background.hdri.file",
-            "background.hdri.file",
-        ]
-        for key in candidates:
-            try:
-                # Проверяем чтением текущего значения — если ключ существует,
-                # это не вызывает KeyError.
-                _ = self.engine.options[key]
-                self._hdri_file_key = key
-                log.info(f"[F3D] Рабочий ключ HDRI: {key}")
-                return
-            except (KeyError, Exception):
-                continue
-        # Если ни один не сработал — оставляем по умолчанию render.hdri.file,
-        # чтобы всё-таки попробовать записать (принудительно).
-        self._hdri_file_key = "render.hdri.file"
-        log.warning(f"[F3D] Рабочий ключ HDRI не найден, fallback на {self._hdri_file_key}")
 
     # --- Цикл рендеринга ---------------------------------------------
 
@@ -358,23 +323,37 @@ class F3DWidget(QWidget):
     def _apply_hdri_internal(self, hdri_path: str | None) -> bool:
         """Внутренняя установка HDRI (движок должен существовать).
 
-        Ключ опции файла HDRI определяется один раз при _init_engine — см.
-        _detect_hdri_key. Здесь используем уже готовый self._hdri_file_key.
+        Перебираем кандидаты имён опции файла HDRI и пробуем ЗАПИСЬЮ —
+        если движок принял без исключения, ключ работает для применения
+        окружения. Проверка через ЧТЕНИЕ некорректна: ключ может иметь
+        дефолт (чтение проходит), но не принимать запись HDRI-файла для
+        применения окружения в текущей версии f3d.
         """
         if not self.engine:
             return False
-        # Если по какой-то причине ключ ещё не определён — пробуем.
-        if self._hdri_file_key is None:
-            self._detect_hdri_key()
         try:
             if hdri_path is not None:
-                file_key = self._hdri_file_key or "render.hdri.file"
-                try:
-                    self.engine.options[file_key] = hdri_path
-                    log.info(f"[F3D] HDRI файл установлен через: {file_key}")
-                except (KeyError, Exception) as e:
-                    log.warning(f"[F3D] Опция '{file_key}' недоступна: {e}")
-                    # Принудительная попытка по умолчанию
+                # Пробуем разные варианты имён опций — f3d 3.5.0 использует
+                # render.hdri.file, но в других версиях имена могли отличаться.
+                # Проверяем ЗАПИСЬЮ: если движок принял — ключ работает.
+                opt_names = [
+                    "render.hdri.file",
+                    "scene.background.hdri.file",
+                    "background.hdri.file",
+                ]
+                file_set = False
+                for opt_name in opt_names:
+                    try:
+                        self.engine.options[opt_name] = hdri_path
+                        file_set = True
+                        log.info(f"[F3D] HDRI файл установлен через: {opt_name}")
+                        break
+                    except (KeyError, Exception) as e:
+                        log.warning(f"[F3D] Опция '{opt_name}' недоступна: {e}")
+                        continue
+
+                if not file_set:
+                    # Последняя попытка: принудительная запись в стандартный ключ
                     try:
                         self.engine.options["render.hdri.file"] = hdri_path
                         log.info("[F3D] HDRI файл установлен принудительно: render.hdri.file")
@@ -397,10 +376,9 @@ class F3DWidget(QWidget):
                 log.info(f"[F3D] HDRI установлена: {os.path.basename(hdri_path)}")
                 return True
             else:
-                # Сбросить HDRI — используем тот же ключ, что и при установке
-                file_key = self._hdri_file_key or "render.hdri.file"
+                # Сбросить HDRI
                 try:
-                    self.engine.options[file_key] = ""
+                    self.engine.options["render.hdri.file"] = ""
                     self.engine.options["render.hdri.ambient"] = False
                     self.engine.options["render.background.skybox"] = False
                 except Exception:
