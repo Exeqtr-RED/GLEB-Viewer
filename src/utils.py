@@ -10,7 +10,12 @@ log = logging.getLogger(__name__)
 
 
 def _candidate_resource_bases() -> list[str]:
-    """Вернуть список кандидатных базовых директорий для ресурсов."""
+    """Вернуть список кандидатных базовых директорий для ресурсов.
+
+    В обычном Python-режиме — это папка на 2 уровня выше этого файла
+    (корень проекта). В PyInstaller frozen-режиме — это sys._MEIPASS
+    (временная папка, в которую распаковывается onefile- или onedir-bundle).
+    """
     candidates = []
     meipass = getattr(sys, '_MEIPASS', None)
     if meipass:
@@ -29,7 +34,11 @@ def _candidate_resource_bases() -> list[str]:
 
 
 def resource_path(relative_path: str) -> str:
-    """Путь к ресурсу: работает и в Python, и в PyInstaller bundle."""
+    """Путь к ресурсу: работает и в Python, и в PyInstaller bundle.
+
+    Перебирает несколько кандидатных базовых директорий и возвращает
+    первую, где ресурс действительно существует.
+    """
     bases = _candidate_resource_bases()
     if not bases:
         return relative_path
