@@ -358,51 +358,70 @@ class F3DWidget(QWidget):
     def _apply_hdri_internal(self, hdri_path: str | None) -> bool:
         """Внутренняя установка HDRI (движок должен существовать).
 
-        Ключ опции файла HDRI определяется один раз при _init_engine — см.
-        _detect_hdri_key. Здесь используем уже готовый self._hdri_file_key.
+        Совместима с f3d 3.5 (bool для skybox) и f3d 4.0 (str для skybox).
         """
         if not self.engine:
             return False
-        # Если по какой-то причине ключ ещё не определён — пробуем.
-        if self._hdri_file_key is None:
-            self._detect_hdri_key()
         try:
             if hdri_path is not None:
-                file_key = self._hdri_file_key or "render.hdri.file"
-                try:
-                    self.engine.options[file_key] = hdri_path
-                    log.info(f"[F3D] HDRI файл установлен через: {file_key}")
-                except (KeyError, Exception) as e:
-                    log.warning(f"[F3D] Опция '{file_key}' недоступна: {e}")
-                    # Принудительная попытка по умолчанию
+                # Пробуем разные варианты имён опций — f3d 3.5 vs 4.0
+                opt_names = [
+                    "render.hdri.file",
+                    "scene.background.hdri.file",
+                    "background.hdri.file",
+                ]
+                file_set = False
+                for opt_name in opt_names:
+                    try:
+                        self.engine.options[opt_name] = hdri_path
+                        file_set = True
+                        log.info(f"[F3D] HDRI файл установлен через: {opt_name}")
+                        break
+                    except (KeyError, Exception) as e:
+                        log.warning(f"[F3D] Опция '{opt_name}' недоступна: {e}")
+                        continue
+
+                if not file_set:
                     try:
                         self.engine.options["render.hdri.file"] = hdri_path
                         log.info("[F3D] HDRI файл установлен принудительно: render.hdri.file")
                     except Exception as e2:
                         log.warning(f"[F3D] Принудительная запись не удалась: {e2}")
 
-                # Включаем ambient и skybox (имена опций из f3d 3.5.0)
-                hdri_toggles = {
-                    "render.hdri.ambient": True,
-                    "render.background.skybox": True,   # НЕ render.hdri.skybox!
-                }
-                for opt, val in hdri_toggles.items():
+                # Включаем ambient и skybox.
+                # В f3d 4.0 тип render.background.skybox изменился с bool на str,
+                # поэтому пробуем несколько вариантов значений.
+                hdri_toggles = [
+                    ("render.hdri.ambient", True),
+                    ("render.background.skybox", True),
+                    ("render.background.skybox", "hdri"),
+                ]
+                seen_opts = set()
+                for opt, val in hdri_toggles:
+                    if opt in seen_opts:
+                        continue
                     try:
                         self.engine.options[opt] = val
-                        log.debug(f"[F3D] {opt} = {val}")
-                    except Exception as e:
-                        log.warning(f"[F3D] Не удалось установить {opt}: {e}")
+                        seen_opts.add(opt)
+                        log.debug(f"[F3D] {opt} = {val!r}")
+                    except (TypeError, KeyError, Exception) as e:
+                        log.debug(f"[F3D] {opt} = {val!r} не принято: {e}")
 
                 self._render_frame()
                 log.info(f"[F3D] HDRI установлена: {os.path.basename(hdri_path)}")
                 return True
             else:
-                # Сбросить HDRI — используем тот же ключ, что и при установке
-                file_key = self._hdri_file_key or "render.hdri.file"
+                # Сбросить HDRI
                 try:
-                    self.engine.options[file_key] = ""
+                    self.engine.options["render.hdri.file"] = ""
                     self.engine.options["render.hdri.ambient"] = False
-                    self.engine.options["render.background.skybox"] = False
+                    try:
+                        self.engine.options["render.background.skybox"] = False
+                    except (TypeError, KeyError, Exception):
+                        try:
+                            self.engine.options["render.background.skybox"] = "disabled"
+                        except Exception:
+                            pass
                 except Exception:
                     pass
                 self._render_frame()
