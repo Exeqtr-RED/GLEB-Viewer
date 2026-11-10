@@ -479,7 +479,13 @@ class MainWindow(QMainWindow):
         self.statusBar().showMessage(f"Reference папки: {'скрыты' if checked else 'отображены'}")
 
     def _apply_hdri_by_path(self, filepath: str):
-        """Определить категорию модели по пути и применить соответствующую HDRI."""
+        """Определить категорию модели по пути и применить соответствующую HDRI.
+
+        Если в пути найдена категория (kosmos/voda/vozduh/zemlya) — применяем
+        соответствующую HDRI как фон. Если категория не найдена или HDRI-файл
+        пропал — НЕ сбрасываем HDRI: оставляем ранее применённую, чтобы фон
+        оставался видимым при навигации между моделями одной категории.
+        """
         # Разбираем путь на компоненты и ищем совпадение с категориями
         parts = os.path.normpath(filepath).lower().split(os.sep)
         hdri_name = None
@@ -495,14 +501,8 @@ class MainWindow(QMainWindow):
                 self.statusBar().showMessage(f"HDRI: {hdri_name}")
             else:
                 log.warning(f"[HDRI] Файл не найден: {hdri_path}")
-                # Если HDRI-файл пропал, сбросить окружение, чтобы не осталась
-                # «прилипшая» HDRI от предыдущей модели.
-                self.f3d_widget.set_hdri(None)
         else:
             log.debug(f"[HDRI] Нет маппинга для пути: {filepath}")
-            # Явный сброс окружения для некатегоризированных моделей —
-            # иначе HDRI от предыдущей модели остаётся применённой.
-            self.f3d_widget.set_hdri(None)
 
     def _apply_theme(self, theme_name: str):
         """Применить тему по имени."""
@@ -775,11 +775,29 @@ class MainWindow(QMainWindow):
 
     def dropEvent(self, event: QDropEvent):
         urls = event.mimeData().urls()
+        if not urls:
+            return
+        any_handled = False
         for url in urls:
             filepath = url.toLocalFile()
-            if filepath:
+            if not filepath:
+                continue
+            if os.path.isdir(filepath):
+                # Дроп папки — загрузить все .glb из неё (рекурсивно)
+                self._settings.setValue("last_directory", filepath)
+                self._last_dir = filepath
+                # Очистить старый список перед загрузкой новой папки
+                self.model_tree.clear_all()
+                count = self._scan_and_load_directory(filepath)
+                self.statusBar().showMessage(f"Найдено моделей: {count} в {filepath}")
+                any_handled = True
+            elif os.path.isfile(filepath):
+                # Дроп файла — загрузить как модель
                 self._do_load_model(filepath)
-        if urls:
+                any_handled = True
+            else:
+                log.warning(f"[Drop] Путь не существует: {filepath}")
+        if any_handled:
             event.acceptProposedAction()
 
     # --- Close ------------------------------------------------------------
