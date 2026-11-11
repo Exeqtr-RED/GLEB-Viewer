@@ -590,21 +590,23 @@ class MainWindow(QMainWindow):
         font = self.menuBar().font()
         font.setPointSize(pt)
         self.menuBar().setFont(font)
-        # A: программный setIconSize + setFont на всех подменю и action'ах.
+        # A: программный setIconSize на QMenuBar + setFont на всех action'ах.
         # QMenuBar.setFont меняет шрифт только самой полоски меню; чтобы
         # шрифт унаследовали пункты ВНУТРИ выпадающих QMenu, нужно явно
         # пройтись по каждому top-level меню и каждому его action'у.
+        #
+        # Внимание: у QMenu НЕТ метода setIconSize (это свойство есть только
+        # у QMenuBar и QToolBar). Размер иконок внутри QMenu задаётся
+        # исключительно через QSS-свойство `icon-size` — см. пункт B.
         icon_px = self._menu_icon_px()
-        icon_sz = QSize(icon_px, icon_px)
+        self.menuBar().setIconSize(QSize(icon_px, icon_px))
         for menu in self._top_menus:
             menu.setFont(font)
-            menu.setIconSize(icon_sz)
             for action in menu.actions():
                 action.setFont(font)
                 sub = action.menu()
                 if sub is not None:
                     sub.setFont(font)
-                    sub.setIconSize(icon_sz)
                     for sub_action in sub.actions():
                         sub_action.setFont(font)
         # B: дублируем через QSS, чтобы поймать виджеты, которые Qt
