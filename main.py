@@ -68,7 +68,10 @@ def main():
     log.info(f"sys.frozen: {getattr(sys, 'frozen', False)}")
     log.info(f"sys.executable: {sys.executable!r}")
     if hasattr(sys, '_MEIPASS'):
-        log.info(f"sys._MEIPASS: {sys._MEIPASS!r}")
+        # PyInstaller добавляет sys._MEIPASS только в frozen .exe;
+        # в dev-режиме этого атрибута нет, и Pylance ругается.
+        # getattr безопасен в обоих случаях.
+        log.info(f"sys._MEIPASS: {getattr(sys, '_MEIPASS')!r}")
     log.info(f"CWD: {os.getcwd()!r}")
 
     app = QApplication(sys.argv)

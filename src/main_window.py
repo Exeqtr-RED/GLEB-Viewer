@@ -9,13 +9,14 @@ import logging
 from PySide6.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QGridLayout, QFileDialog,
     QMessageBox, QSplitter, QProgressDialog, QInputDialog,
-    QLabel, QScrollArea, QSizePolicy,
+    QLabel, QScrollArea, QSizePolicy, QProxyStyle,
 )
-from PySide6.QtCore import Qt, QSettings
+from PySide6.QtCore import Qt, QSettings, QByteArray
 from PySide6.QtGui import (
     QAction, QActionGroup, QKeySequence,
-    QDropEvent, QDragEnterEvent, QPixmap, QIcon,
+    QDropEvent, QDragEnterEvent, QPixmap, QIcon, QPainter,
 )
+from PySide6.QtSvg import QSvgRenderer
 
 from src.f3d_widget import F3DWidget
 from src.model_tree import ModelTree
@@ -53,12 +54,46 @@ THEMES = {
 }
 
 
+class MenuIconStyle(QProxyStyle):
+    """Прокси-стиль, который подменяет PM_SmallIconSize на заданный.
+
+    На Windows QMenuBar использует style()->pixelMetric(PM_SmallIconSize),
+    чтобы узнать размер иконок. По умолчанию это 16, и Qt принудительно
+    масштабирует QIcon в 16x16 — независимо от того, какого размера
+    pixmap внутри. QSS-свойство icon-size для QMenuBar на Windows тоже
+    игнорируется.
+
+    Через QProxyStyle мы подменяем PM_SmallIconSize на наше значение,
+    и QMenuBar начинает рисовать иконки в нужном размере.
+    """
+
+    def __init__(self, base_style=None):
+        super().__init__(base_style)
+        self._icon_size = 16
+
+    def set_icon_size(self, px: int):
+        self._icon_size = max(8, int(px))
+
+    def pixelMetric(self, metric, option=None, widget=None):
+        from PySide6.QtWidgets import QStyle
+        if metric == QStyle.PixelMetric.PM_SmallIconSize:
+            return self._icon_size
+        return super().pixelMetric(metric, option, widget)
+
+
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle("GLEB Viewer — F3D Embedded")
         self.setMinimumSize(1024, 768)
         self.resize(1280, 900)
+
+        # Прокси-стиль для QMenuBar, который подменяет размер иконок.
+        # Создаётся один раз; при смене "Шрифт меню" только обновляем
+        # значение через set_icon_size() и триггерим перерисовку.
+        base_style = self.menuBar().style()
+        self._menu_icon_style = MenuIconStyle(base_style)
+        self.menuBar().setStyle(self._menu_icon_style)
 
         # Настройки (запоминание папки и т.д.)
         self._settings = QSettings("GLEB_Viewer", "GLEB_Viewer")
@@ -165,21 +200,94 @@ class MainWindow(QMainWindow):
         self.splitter.setSizes([250, 750])
 
     def _make_icon(self, name: str) -> QIcon:
-        """Загрузить SVG иконку из папки icons."""
+        """Загрузить SVG иконку из папки icons (без масштабирования).
+
+        Используется для инициализации; для иконок, размер которых должен
+        следовать за "Шрифт меню", используйте _render_svg_icon().
+        """
         path = os.path.join(ICONS_DIR, name)
         if os.path.isfile(path):
             return QIcon(path)
         return QIcon()
 
+    def _render_svg_icon(self, name: str, px: int) -> QIcon:
+        """Перерисовать SVG-иконку в QPixmap нужного размера.
+
+        QSS-свойство `icon-size` не работает для top-level пунктов QMenuBar
+        (там Qt берёт размер из самой QIcon). Поэтому масштабируем иконки
+        вручную через QSvgRenderer — это даёт чёткий pixmap любого размера
+        без потери качества (SVG не "растягивается", а рендерится заново).
+        """
+        path = os.path.join(ICONS_DIR, name)
+        if not os.path.isfile(path):
+            return QIcon()
+        try:
+            with open(path, "rb") as f:
+                data = QByteArray(f.read())
+            renderer = QSvgRenderer(data)
+            if not renderer.isValid():
+                return QIcon(path)
+            # Создаём pixmap с учётом devicePixelRatio для чёткости на HiDPI
+            dpr = self.devicePixelRatioF() if hasattr(self, 'devicePixelRatioF') else 1.0
+            if dpr < 1.0:
+                dpr = 1.0
+            phys_px = max(1, int(px * dpr))
+            pixmap = QPixmap(phys_px, phys_px)
+            pixmap.fill(Qt.GlobalColor.transparent)
+            painter = QPainter(pixmap)
+            renderer.render(painter)
+            painter.end()
+            pixmap.setDevicePixelRatio(dpr)
+            # detach() гарантирует, что у pixmap будет уникальный cacheKey —
+            # иначе Qt может вернуть кэшированную иконку и размер не изменится.
+            pixmap = pixmap.copy(0, 0, phys_px, phys_px)
+            pixmap.setDevicePixelRatio(dpr)
+            icon = QIcon()
+            icon.addPixmap(pixmap, QIcon.Mode.Normal, QIcon.State.Off)
+            icon.addPixmap(pixmap, QIcon.Mode.Normal, QIcon.State.On)
+            icon.addPixmap(pixmap, QIcon.Mode.Active, QIcon.State.Off)
+            icon.addPixmap(pixmap, QIcon.Mode.Active, QIcon.State.On)
+            icon.addPixmap(pixmap, QIcon.Mode.Disabled, QIcon.State.Off)
+            return icon
+        except Exception as e:
+            log.warning(f"[Icon] Ошибка рендера {name}: {e}")
+            return QIcon(path)
+
+    def _refresh_menu_icons(self):
+        """Перерисовать все иконки меню в текущий _menu_font_size.
+
+        Алгоритм:
+        1) Обновляем размер в прокси-стиле (MenuIconStyle) — это заставляет
+           QMenuBar рисовать иконки в новом размере через pixelMetric.
+        2) Перерисовываем SVG-иконки в QPixmap нужного размера (для
+           подменю QMenu, который использует QIcon напрямую).
+        3) Триггерим перерисовку QMenuBar.
+        """
+        icon_px = self._menu_icon_px()
+        # 1) Обновляем прокси-стиль — главное для top-level пунктов QMenuBar
+        self._menu_icon_style.set_icon_size(icon_px)
+        # 2) Перерисовываем иконки для всех action'ов (для QMenu и тех
+        # action'ов, которые сами используют QIcon)
+        for action, name in self._icon_actions:
+            action.setIcon(QIcon())
+            new_icon = self._render_svg_icon(name, icon_px)
+            action.setIcon(new_icon)
+        # 3) Принудительная перерисовка QMenuBar и пересчёт layout
+        self.menuBar().update()
+        self.menuBar().updateGeometry()
+
     def _setup_menu(self):
         menubar = self.menuBar()
-        # Сохраняем все меню верхнего уровня — к ним применяется шрифт и
-        # QMenu::iconSize, когда пользователь меняет "Шрифт меню".
+        # Сохраняем все меню верхнего уровня — к ним применяется шрифт.
         self._top_menus: list = []
+        # Карта action -> имя файла иконки, чтобы при смене размера шрифта
+        # перерисовать SVG-иконки в нужный размер.
+        self._icon_actions: list[tuple[QAction, str]] = []
 
         # -- Настройки (бывший Файл) --
         settings_menu = menubar.addMenu(self._make_icon("settings.svg"), "Настройки")
         self._top_menus.append(settings_menu)
+        self._icon_actions.append((settings_menu.menuAction(), "settings.svg"))
 
         open_dir = QAction("Выбрать директорию моделей", self)
         open_dir.setShortcut(QKeySequence.StandardKey.Open)
@@ -191,10 +299,12 @@ class MainWindow(QMainWindow):
         f3d_settings = QAction(self._make_icon("f3d.svg"), "Настройки F3D...", self)
         f3d_settings.triggered.connect(self._show_settings)
         settings_menu.addAction(f3d_settings)
+        self._icon_actions.append((f3d_settings, "f3d.svg"))
 
         # -- Вид --
         view_menu = menubar.addMenu(self._make_icon("theme.svg"), "Вид")
         self._top_menus.append(view_menu)
+        self._icon_actions.append((view_menu.menuAction(), "theme.svg"))
 
         # Подменю "Тема"
         theme_menu = view_menu.addMenu("Тема")
@@ -238,6 +348,7 @@ class MainWindow(QMainWindow):
         hide_ref.toggled.connect(self._on_hide_ref_toggled)
         view_menu.addAction(hide_ref)
         self._hide_ref_action = hide_ref
+        self._icon_actions.append((hide_ref, "reference_folder.svg"))
         # Устанавливаем ПОСЛЕ подключения сигнала
         if self._settings.value("hide_reference", False, type=bool):  # type: ignore[assignment]
             hide_ref.setChecked(True)
@@ -245,6 +356,7 @@ class MainWindow(QMainWindow):
         # -- Анимация --
         anim_menu = menubar.addMenu(self._make_icon("animation.svg"), "Анимация")
         self._top_menus.append(anim_menu)
+        self._icon_actions.append((anim_menu.menuAction(), "animation.svg"))
 
         self._anim_play_act = QAction("Воспроизвести / Пауза", self)
         self._anim_play_act.setShortcut("Space")
@@ -270,6 +382,7 @@ class MainWindow(QMainWindow):
         # -- Пакетный менеджер --
         batch_menu = menubar.addMenu(self._make_icon("screenshot.svg"), "Пакетный менеджер")
         self._top_menus.append(batch_menu)
+        self._icon_actions.append((batch_menu.menuAction(), "screenshot.svg"))
 
         batch_screenshots = QAction("Создать скриншоты всех моделей", self)
         batch_screenshots.triggered.connect(self._batch_screenshots)
@@ -278,6 +391,7 @@ class MainWindow(QMainWindow):
         # -- Справка --
         help_menu = menubar.addMenu(self._make_icon("about.svg"), "Справка")
         self._top_menus.append(help_menu)
+        self._icon_actions.append((help_menu.menuAction(), "about.svg"))
 
         about = QAction("О программе", self)
         about.triggered.connect(self._show_about)
@@ -302,7 +416,10 @@ class MainWindow(QMainWindow):
         log.info(f"[Paths] CWD: {os.getcwd()}")
         log.info(f"[Paths] sys.frozen: {getattr(sys, 'frozen', False)}")
         if hasattr(sys, '_MEIPASS'):
-            log.info(f"[Paths] sys._MEIPASS: {sys._MEIPASS}")
+            # PyInstaller добавляет sys._MEIPASS только в frozen .exe;
+            # в dev-режиме этого атрибута нет, и Pylance ругается.
+            # getattr безопасен в обоих случаях.
+            log.info(f"[Paths] sys._MEIPASS: {getattr(sys, '_MEIPASS')}")
         log.info(f"[Paths] THEMES_DIR: {THEMES_DIR} (exists={os.path.isdir(THEMES_DIR)})")
         log.info(f"[Paths] HDRI_DIR:   {HDRI_DIR} (exists={os.path.isdir(HDRI_DIR)})")
         log.info(f"[Paths] ICONS_DIR:  {ICONS_DIR} (exists={os.path.isdir(ICONS_DIR)})")
@@ -471,7 +588,16 @@ class MainWindow(QMainWindow):
     def _on_hide_ref_toggled(self, checked: bool):
         """Сменить иконку, текст и скрыть/показать reference папки."""
         icon_name = "reference_folder_dis.svg" if checked else "reference_folder.svg"
-        self._hide_ref_action.setIcon(self._make_icon(icon_name))
+        # Перерисовываем иконку в текущий размер через QSvgRenderer,
+        # чтобы она соответствовала масштабу "Шрифт меню".
+        icon_px = self._menu_icon_px()
+        self._hide_ref_action.setIcon(self._render_svg_icon(icon_name, icon_px))
+        # Обновляем запись в карте — чтобы при смене размера шрифта
+        # использовалась актуальная иконка.
+        for i, (action, name) in enumerate(self._icon_actions):
+            if action is self._hide_ref_action:
+                self._icon_actions[i] = (action, icon_name)
+                break
         self._hide_ref_action.setText("Отобразить reference" if checked else "Скрывать reference")
         self.model_tree.set_hide_reference(checked)
         self._settings.setValue("hide_reference", checked)
@@ -590,14 +716,10 @@ class MainWindow(QMainWindow):
         font = self.menuBar().font()
         font.setPointSize(pt)
         self.menuBar().setFont(font)
-        # A: setFont на всех action'ах подменю.
-        # QMenuBar.setFont меняет шрифт только самой полоски меню; чтобы
-        # шрифт унаследовали пункты ВНУТРИ выпадающих QMenu, нужно явно
-        # пройтись по каждому top-level меню и каждому его action'у.
-        #
-        # Внимание: ни QMenuBar, ни QMenu не имеют метода setIconSize.
-        # (Это свойство есть только у QToolBar/QAbstractItemView.)
-        # Размер иконок в меню управляется ИСКЛЮЧИТЕЛЬНО через QSS — см. B.
+        # 1) Шрифт: распространяем на все пункты выпадающих QMenu
+        # (QMenuBar.setFont меняет только полоску, не вложенные action'ы).
+        # Внимание: ни QMenuBar, ни QMenu не имеют метода setIconSize —
+        # это свойство есть только у QToolBar/QAbstractItemView.
         for menu in self._top_menus:
             menu.setFont(font)
             for action in menu.actions():
@@ -607,10 +729,13 @@ class MainWindow(QMainWindow):
                     sub.setFont(font)
                     for sub_action in sub.actions():
                         sub_action.setFont(font)
-        # B: QSS-патч `icon-size` для QMenuBar и QMenu.
-        # Это единственный способ масштабировать SVG-иконки в меню
-        # (QSS-свойство `icon-size` понимается обоими виджетами).
+        # 2) QSS-патч `icon-size` для QMenu — масштабирует иконки
+        # внутри выпадающих списков (для пунктов с QIcon(path)).
         self._apply_menu_icon_size_qss()
+        # 3) Перерисовать SVG-иконки в нужный размер вручную —
+        # top-level пункты QMenuBar не подчиняются QSS icon-size,
+        # их иконку нужно явно перерисовать в пиксели через QSvgRenderer.
+        self._refresh_menu_icons()
         self._settings.setValue("menu_font_size", pt)
         self.statusBar().showMessage(f"Размер шрифта меню: {pt} пт")
 
