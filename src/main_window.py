@@ -11,7 +11,7 @@ from PySide6.QtWidgets import (
     QMessageBox, QSplitter, QProgressDialog, QInputDialog,
     QLabel, QScrollArea, QSizePolicy,
 )
-from PySide6.QtCore import Qt, QSettings, QSize
+from PySide6.QtCore import Qt, QSettings
 from PySide6.QtGui import (
     QAction, QActionGroup, QKeySequence,
     QDropEvent, QDragEnterEvent, QPixmap, QIcon,
@@ -590,16 +590,14 @@ class MainWindow(QMainWindow):
         font = self.menuBar().font()
         font.setPointSize(pt)
         self.menuBar().setFont(font)
-        # A: программный setIconSize на QMenuBar + setFont на всех action'ах.
+        # A: setFont на всех action'ах подменю.
         # QMenuBar.setFont меняет шрифт только самой полоски меню; чтобы
         # шрифт унаследовали пункты ВНУТРИ выпадающих QMenu, нужно явно
         # пройтись по каждому top-level меню и каждому его action'у.
         #
-        # Внимание: у QMenu НЕТ метода setIconSize (это свойство есть только
-        # у QMenuBar и QToolBar). Размер иконок внутри QMenu задаётся
-        # исключительно через QSS-свойство `icon-size` — см. пункт B.
-        icon_px = self._menu_icon_px()
-        self.menuBar().setIconSize(QSize(icon_px, icon_px))
+        # Внимание: ни QMenuBar, ни QMenu не имеют метода setIconSize.
+        # (Это свойство есть только у QToolBar/QAbstractItemView.)
+        # Размер иконок в меню управляется ИСКЛЮЧИТЕЛЬНО через QSS — см. B.
         for menu in self._top_menus:
             menu.setFont(font)
             for action in menu.actions():
@@ -609,9 +607,9 @@ class MainWindow(QMainWindow):
                     sub.setFont(font)
                     for sub_action in sub.actions():
                         sub_action.setFont(font)
-        # B: дублируем через QSS, чтобы поймать виджеты, которые Qt
-        # пересоздаёт при показе меню (для них C++ setIconSize не всегда
-        # «доживает» до момента отрисовки).
+        # B: QSS-патч `icon-size` для QMenuBar и QMenu.
+        # Это единственный способ масштабировать SVG-иконки в меню
+        # (QSS-свойство `icon-size` понимается обоими виджетами).
         self._apply_menu_icon_size_qss()
         self._settings.setValue("menu_font_size", pt)
         self.statusBar().showMessage(f"Размер шрифта меню: {pt} пт")
