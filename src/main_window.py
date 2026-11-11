@@ -11,7 +11,7 @@ from PySide6.QtWidgets import (
     QMessageBox, QSplitter, QProgressDialog, QInputDialog,
     QLabel, QScrollArea, QSizePolicy,
 )
-from PySide6.QtCore import Qt, QSettings
+from PySide6.QtCore import Qt, QSettings, QSize
 from PySide6.QtGui import (
     QAction, QActionGroup, QKeySequence,
     QDropEvent, QDragEnterEvent, QPixmap, QIcon,
@@ -64,8 +64,8 @@ class MainWindow(QMainWindow):
         self._settings = QSettings("GLEB_Viewer", "GLEB_Viewer")
         self._last_dir: str = self._settings.value("last_directory", "", type=str)  # type: ignore[assignment]
         self._current_theme_name: str = self._settings.value("theme", "По умолчанию", type=str)  # type: ignore[assignment]
-        self._font_size: int = self._settings.value("font_size", 9)  # type: ignore[assignment]
-        self._menu_font_size: int = self._settings.value("menu_font_size", 9)  # type: ignore[assignment]
+        self._font_size: int = self._settings.value("font_size", 9, type=int)  # type: ignore[assignment]
+        self._menu_font_size: int = self._settings.value("menu_font_size", 9, type=int)  # type: ignore[assignment]
 
         self._setup_ui()
         self._setup_menu()
@@ -173,9 +173,13 @@ class MainWindow(QMainWindow):
 
     def _setup_menu(self):
         menubar = self.menuBar()
+        # Сохраняем все меню верхнего уровня — к ним применяется шрифт и
+        # QMenu::iconSize, когда пользователь меняет "Шрифт меню".
+        self._top_menus: list = []
 
         # -- Настройки (бывший Файл) --
         settings_menu = menubar.addMenu(self._make_icon("settings.svg"), "Настройки")
+        self._top_menus.append(settings_menu)
 
         open_dir = QAction("Выбрать директорию моделей", self)
         open_dir.setShortcut(QKeySequence.StandardKey.Open)
@@ -190,6 +194,7 @@ class MainWindow(QMainWindow):
 
         # -- Вид --
         view_menu = menubar.addMenu(self._make_icon("theme.svg"), "Вид")
+        self._top_menus.append(view_menu)
 
         # Подменю "Тема"
         theme_menu = view_menu.addMenu("Тема")
@@ -239,6 +244,7 @@ class MainWindow(QMainWindow):
 
         # -- Анимация --
         anim_menu = menubar.addMenu(self._make_icon("animation.svg"), "Анимация")
+        self._top_menus.append(anim_menu)
 
         self._anim_play_act = QAction("Воспроизвести / Пауза", self)
         self._anim_play_act.setShortcut("Space")
@@ -263,6 +269,7 @@ class MainWindow(QMainWindow):
 
         # -- Пакетный менеджер --
         batch_menu = menubar.addMenu(self._make_icon("screenshot.svg"), "Пакетный менеджер")
+        self._top_menus.append(batch_menu)
 
         batch_screenshots = QAction("Создать скриншоты всех моделей", self)
         batch_screenshots.triggered.connect(self._batch_screenshots)
@@ -270,6 +277,8 @@ class MainWindow(QMainWindow):
 
         # -- Справка --
         help_menu = menubar.addMenu(self._make_icon("about.svg"), "Справка")
+        self._top_menus.append(help_menu)
+
         about = QAction("О программе", self)
         about.triggered.connect(self._show_about)
         help_menu.addAction(about)
@@ -489,13 +498,19 @@ class MainWindow(QMainWindow):
             log.debug(f"[HDRI] Нет маппинга для пути: {filepath}")
 
     def _apply_theme(self, theme_name: str):
-        """Применить тему по имени."""
+        """Применить тему по имени.
+
+        После применения .qss заново навешиваем динамический QSS-патч
+        icon-size, потому что setStyleSheet() полностью заменяет таблицу
+        стилей и предыдущий патч, добавленный _set_menu_font_size,
+        иначе теряется.
+        """
         qss_file = THEMES.get(theme_name)
         applied_ok = True
         if qss_file is None:
             self.setStyleSheet("")
         else:
-            path = os.path.join(THEMES_DIR, qss_file)
+            path = resource_path(os.path.join("themes", qss_file))
             if os.path.isfile(path):
                 with open(path, "r", encoding="utf-8") as f:
                     qss = f.read()
@@ -511,6 +526,9 @@ class MainWindow(QMainWindow):
             self._current_theme_name = theme_name
             self._settings.setValue("theme", theme_name)
             log.debug(f"[Theme] Тема: {theme_name}")
+            # Восстановить динамический патч icon-size, который
+            # _set_menu_font_size применяет поверх темы.
+            self._apply_menu_icon_size_qss()
         else:
             # Снять отметку с несуществующей темы и вернуть старую
             if theme_name in self._theme_actions:
@@ -535,11 +553,64 @@ class MainWindow(QMainWindow):
         self._settings.setValue("font_size", pt)
         self.statusBar().showMessage(f"Размер шрифта дерева: {pt} пт")
 
+    def _menu_icon_px(self) -> int:
+        """Пересчитать размер шрифта (pt) в размер иконки (px).
+
+        Базовая иконка 16 px при 9 pt. Растём пропорционально, с нижним
+        порогом 12 px (мельче иконки теряют читаемость).
+        """
+        return max(12, int(self._menu_font_size * 16 / 9))
+
+    def _apply_menu_icon_size_qss(self):
+        """Добавить к текущему QSS правила icon-size для QMenuBar/QMenu.
+
+        QSS-свойство `icon-size` переопределяет дефолтный размер 16x16,
+        в котором Qt рендерит SVG-иконки. Так как темы .qss мы загружаем
+        через setStyleSheet() (что полностью заменяет таблицу), этот патч
+        нужно навешивать ПОСЛЕ применения темы — что и делается в
+        _apply_theme() и в _set_menu_font_size().
+        """
+        icon_px = self._menu_icon_px()
+        extra = (
+            f"\n"
+            f"/* dynamic icon-size patch */\n"
+            f"QMenuBar {{ icon-size: {icon_px}px; }}\n"
+            f"QMenu {{ icon-size: {icon_px}px; }}\n"
+        )
+        cur = self.styleSheet() or ""
+        marker = "/* dynamic icon-size patch */"
+        if marker in cur:
+            # Заменяем предыдущий патч, не дублируем
+            head = cur.split(marker)[0]
+            cur = head
+        self.setStyleSheet(cur + extra)
+
     def _set_menu_font_size(self, pt: int):
         self._menu_font_size = pt
         font = self.menuBar().font()
         font.setPointSize(pt)
         self.menuBar().setFont(font)
+        # A: программный setIconSize + setFont на всех подменю и action'ах.
+        # QMenuBar.setFont меняет шрифт только самой полоски меню; чтобы
+        # шрифт унаследовали пункты ВНУТРИ выпадающих QMenu, нужно явно
+        # пройтись по каждому top-level меню и каждому его action'у.
+        icon_px = self._menu_icon_px()
+        icon_sz = QSize(icon_px, icon_px)
+        for menu in self._top_menus:
+            menu.setFont(font)
+            menu.setIconSize(icon_sz)
+            for action in menu.actions():
+                action.setFont(font)
+                sub = action.menu()
+                if sub is not None:
+                    sub.setFont(font)
+                    sub.setIconSize(icon_sz)
+                    for sub_action in sub.actions():
+                        sub_action.setFont(font)
+        # B: дублируем через QSS, чтобы поймать виджеты, которые Qt
+        # пересоздаёт при показе меню (для них C++ setIconSize не всегда
+        # «доживает» до момента отрисовки).
+        self._apply_menu_icon_size_qss()
         self._settings.setValue("menu_font_size", pt)
         self.statusBar().showMessage(f"Размер шрифта меню: {pt} пт")
 
@@ -702,17 +773,36 @@ class MainWindow(QMainWindow):
 
     # --- Drag & Drop ------------------------------------------------------
 
+    # Расширения, которые F3D умеет загружать (взят минимальный набор из
+    # README). Если пользователь перетащит файл другого типа, событие
+    # игнорируется — иначе _do_load_model передаёт F3D любой файл и тот
+    # падает с ошибкой внутри load_model().
+    _DND_EXTS = {
+        ".glb", ".gltf", ".fbx", ".obj", ".stl", ".ply", ".vtk",
+        ".abc", ".usd", ".usda", ".usdc", ".3ds", ".dae", ".pbrt",
+    }
+
     def dragEnterEvent(self, event: QDragEnterEvent):
-        if event.mimeData().hasUrls():
-            event.acceptProposedAction()
+        if not event.mimeData().hasUrls():
+            return
+        for url in event.mimeData().urls():
+            filepath = url.toLocalFile()
+            if filepath and os.path.splitext(filepath)[1].lower() in self._DND_EXTS:
+                event.acceptProposedAction()
+                return
 
     def dropEvent(self, event: QDropEvent):
         urls = event.mimeData().urls()
+        accepted = False
         for url in urls:
             filepath = url.toLocalFile()
-            if filepath:
-                self._do_load_model(filepath)
-        if urls:
+            if not filepath:
+                continue
+            if os.path.splitext(filepath)[1].lower() not in self._DND_EXTS:
+                continue
+            self._do_load_model(filepath)
+            accepted = True
+        if accepted:
             event.acceptProposedAction()
 
     # --- Close ------------------------------------------------------------

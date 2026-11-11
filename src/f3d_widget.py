@@ -88,12 +88,17 @@ class F3DWidget(QWidget):
         self._idle_timer.setInterval(800)
         self._idle_timer.timeout.connect(self._stop_loop)
 
+        # Кэш последнего размера окна, переданного в engine.window.size.
+        # f3d при каждом присваивании может перевыделять framebuffer,
+        # поэтому дёргаем size только когда виджет реально изменился.
+        self._last_window_size: tuple[int, int] | None = None
+
     def _init_engine(self):
         if self.engine is not None:
             return
         try:
             self.engine = f3d.Engine.create(offscreen=True)
-            self.engine.window.size = (self.width(), self.height())
+            self._set_engine_window_size((self.width(), self.height()))
             log.info(f"[F3D] Движок создан (offscreen), версия {f3d.__version__}")
 
             # Применить отложенную HDRI (если set_hdri вызван до init)
@@ -107,6 +112,24 @@ class F3DWidget(QWidget):
             self.engine = None
 
     # --- Цикл рендеринга ---------------------------------------------
+
+    def _set_engine_window_size(self, size: tuple[int, int]):
+        """Обновить размер offscreen-буфера f3d, только если он изменился.
+
+        f3d при каждом присваивании engine.window.size может пересоздавать
+        framebuffer и выделять GPU-память. На 60 FPS это даёт десятки
+        мегабайт мусора в секунду и замедляет GC. Кэшируем последний size
+        и дёргаем движок только при реальном изменении геометрии виджета.
+        """
+        if not self.engine:
+            return
+        if self._last_window_size == size:
+            return
+        try:
+            self.engine.window.size = size
+            self._last_window_size = size
+        except Exception as e:
+            log.warning(f"[F3D] Ошибка установки размера окна: {e}")
 
     def _start_loop(self):
         if not self._render_timer.isActive():
@@ -148,7 +171,7 @@ class F3DWidget(QWidget):
             if self._cam_synced:
                 self._apply_camera_to_engine()
 
-            self.engine.window.size = (self.width(), self.height())
+            self._set_engine_window_size((self.width(), self.height()))
             img = self.engine.window.render_to_image()
             if img is not None:
                 self._last_image = self._f3d_image_to_qimage(img)
@@ -163,8 +186,12 @@ class F3DWidget(QWidget):
             return False
         try:
             self._apply_camera_to_engine()
+            # Принудительно меняем size на нужный для скриншота
+            # (минуем _set_engine_window_size, потому что нужен конкретный size)
             self.engine.window.size = size
             img = self.engine.window.render_to_image()
+            # Восстанавливаем кэш сразу после рендера
+            self._last_window_size = None
             if img is None:
                 return False
 
@@ -184,7 +211,7 @@ class F3DWidget(QWidget):
             qimg = QImage(arr.data.tobytes(), w, h, w * channels, fmt).copy()
             result = qimg.save(filepath)
             # Восстановить размер виджета и камеру
-            self.engine.window.size = (self.width(), self.height())
+            self._set_engine_window_size((self.width(), self.height()))
             self._apply_camera_to_engine()
             return result
         except Exception as e:
@@ -195,10 +222,6 @@ class F3DWidget(QWidget):
         w = f3d_img.width
         h = f3d_img.height
         channels = f3d_img.channel_count
-        arr = np.frombuffer(f3d_img.content, dtype=np.uint8).reshape((h, w, channels))
-
-        # OpenGL offscreen: origin в bottom-left — переворачиваем по вертикали
-        arr = np.flipud(arr).copy()
 
         if channels == 4:
             fmt = QImage.Format.Format_RGBA8888
@@ -207,11 +230,17 @@ class F3DWidget(QWidget):
         else:
             return QImage()
 
-        return QImage(arr.data.tobytes(), w, h, w * channels, fmt).copy()
+        arr = np.frombuffer(f3d_img.content, dtype=np.uint8).reshape((h, w, channels))
+        # OpenGL offscreen: origin в bottom-left — переворачиваем по вертикали.
+        # tobytes() на view с отрицательным stride даёт уже перевёрнутый
+        # contiguous-буфер, поэтому отдельный .copy() не нужен: итоговая
+        # QImage всё равно зовёт .copy(), чтобы отвязаться от numpy-памяти.
+        flipped = np.flipud(arr)
+        return QImage(flipped.tobytes(), w, h, w * channels, fmt).copy()
 
     # --- paintEvent / resizeEvent -------------------------------------
 
-    def paintEvent(self, event):
+    def paintEvent(self, event):  # noqa: W0613 — сигнатура Qt override
         painter = QPainter(self)
         if self._last_image:
             painter.drawImage(self.rect(), self._last_image)
@@ -227,7 +256,7 @@ class F3DWidget(QWidget):
     def resizeEvent(self, event):
         super().resizeEvent(event)
         if self.engine:
-            self.engine.window.size = (self.width(), self.height())
+            self._set_engine_window_size((self.width(), self.height()))
             self._render_frame()
 
     # --- Модели ------------------------------------------------------
@@ -329,7 +358,7 @@ class F3DWidget(QWidget):
                 if not file_set:
                     # Последняя попытка: принудительная запись
                     self.engine.options["render.hdri.file"] = hdri_path
-                    log.info(f"[F3D] HDRI файл установлен принудительно: render.hdri.file")
+                    log.info("[F3D] HDRI файл установлен принудительно: render.hdri.file")
 
                 # Включаем ambient и skybox (имена опций из f3d 3.5.0).
                 # В f3d 4.0 тип render.background.skybox изменился с bool на str,
@@ -411,15 +440,14 @@ class F3DWidget(QWidget):
         if not self.engine or not self._animation_playing:
             return
         try:
+            # Читаем текущее время анимации (опция может отсутствовать в
+            # разных версиях f3d — тогда стартуем с 0).
             try:
-                try:
-                    cur = self.engine.options["scene.animation.time"]  # type: ignore[union-attr]
-                except (KeyError, TypeError):
-                    cur = 0
-                if isinstance(cur, (int, float)):
-                    self.engine.options["scene.animation.time"] = cur + 0.033 * self._animation_speed
-            except Exception:
-                pass
+                cur = self.engine.options["scene.animation.time"]  # type: ignore[union-attr]
+            except (KeyError, TypeError):
+                cur = 0
+            if isinstance(cur, (int, float)):
+                self.engine.options["scene.animation.time"] = cur + 0.033 * self._animation_speed
             self._render_frame()
         except Exception as e:
             log.warning(f"[F3D] Animation error: {e}")
@@ -441,10 +469,15 @@ class F3DWidget(QWidget):
             self.engine.options[key] = value
             
             # Опции model.* (wireframe, normal_glyphs и т.д.) применяются
-            # только при загрузке модели — перезагружаем без сброса камеры
+            # только при загрузке модели — перезагружаем. После перезагрузки
+            # геометрия может измениться, поэтому синхронизируем камеру,
+            # иначе она «улетит» от центра сцены.
             if key.startswith("model.") and self._current_model_path:
                 self.engine.scene.clear()
                 self.engine.scene.add(self._current_model_path)
+                # Сохраняем наше состояние камеры, чтобы не дать движку
+                # его перезаписать при add().
+                self._apply_camera_to_engine()
                 log.info(f"[F3D] Перезагрузка модели для опции '{key}'")
             
             self._render_frame()
@@ -729,5 +762,16 @@ class F3DWidget(QWidget):
         self._render_timer.stop()
         self._idle_timer.stop()
         self._animation_timer.stop()
+        # Явно освобождаем движок, чтобы C++-деструктор f3d.Engine
+        # освободил OpenGL-контекст и GPU-буферы немедленно, а не ждал
+        # следующего цикла GC. Простой self.engine = None разрывает
+        # Python-ссылку, но C++-объект может оставаться живым, пока
+        # внутренний PyObject* не будет освобождён.
+        engine = self.engine
         self.engine = None
+        try:
+            del engine
+        except Exception:
+            pass
         self._last_image = None
+        self._last_window_size = None

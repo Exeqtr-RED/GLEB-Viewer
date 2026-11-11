@@ -16,7 +16,7 @@ from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QTreeWidget, QTreeWidgetItem,
     QLabel, QAbstractItemView, QLineEdit, QMenu, QComboBox,
     QPushButton, QInputDialog, QHBoxLayout, QFrame, QSizePolicy,
-    QDialog, QGroupBox, QScrollArea,
+    QDialog, QGroupBox,
 )
 from PySide6.QtCore import Qt, Signal, QTimer
 from PySide6.QtGui import QAction
@@ -413,14 +413,19 @@ class ModelTree(QWidget):
     # --- Окно тегов --------------------------------------------------
 
     def _open_tag_dialog(self):
-        # Удаляем старый диалог, чтобы не копить скрытые экземпляры
-        # (по умолчанию close() только прячет окно, не уничтожает его).
+        # Если диалог уже открыт — просто поднимаем его наверх, не создавая новый.
+        # WA_DeleteOnClose гарантирует, что после закрытия Qt сам уничтожит объект;
+        # сигнал destroyed обнуляет ссылку, чтобы не было висячего указателя.
         if self._tag_dialog is not None:
-            self._tag_dialog.deleteLater()
-            self._tag_dialog = None
+            self._tag_dialog.show()
+            self._tag_dialog.raise_()
+            self._tag_dialog.activateWindow()
+            self._tag_dialog.refresh()
+            return
+
         self._tag_dialog = TagManagerDialog(self, self.window())
-        # Чтобы диалог удалялся GC после закрытия, а не висел скрытым
         self._tag_dialog.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose, True)
+        self._tag_dialog.destroyed.connect(lambda _=None: setattr(self, "_tag_dialog", None))
         self._tag_dialog.refresh()
         self._tag_dialog.show()
         self._tag_dialog.raise_()
@@ -577,7 +582,7 @@ class ModelTree(QWidget):
 
     # --- Поиск / Фильтрация -----------------------------------------
 
-    def _on_search_text_changed(self, text: str):
+    def _on_search_text_changed(self):
         self._search_timer.start()
 
     def _do_filter(self):
@@ -681,6 +686,16 @@ class ModelTree(QWidget):
         self._all_paths.clear()
         self._ref_folders.clear()
         self._file_meta.clear()
+        # Теги привязаны к путям файлов/папок; при смене директории они
+        # становятся недействительными и больше не должны храниться в памяти
+        # и в tags.json (иначе словари бесконечно растут при частой смене папки).
+        self._tags.clear()
+        self._folder_tags.clear()
+        self._save_tags()
+        # Останавливаем ждущий таймер одиночного клика, чтобы он не стрельнул
+        # по уже удалённому _pending_click_item после rebuild'а дерева.
+        self._click_timer.stop()
+        self._pending_click_item = None
         self.tree.clear()
         self._root_dir = ""
         self.header.setText("Модели (.glb)")
@@ -854,7 +869,7 @@ class ModelTree(QWidget):
         """Обработка Ctrl+- (свернуть) и Ctrl++ (развернуть)."""
         item = self.tree.currentItem()
         if item is None:
-            super(QTreeWidget, self.tree).keyPressEvent(event)
+            QTreeWidget.keyPressEvent(self.tree, event)
             return
         if event.modifiers() & Qt.KeyboardModifier.ControlModifier:
             key = event.key()
@@ -866,12 +881,15 @@ class ModelTree(QWidget):
                 item.setExpanded(True)
                 event.accept()
                 return
-        super(QTreeWidget, self.tree).keyPressEvent(event)
+        QTreeWidget.keyPressEvent(self.tree, event)
 
     def _on_item_clicked(self, item, _column):
         path = item.data(0, Qt.ItemDataRole.UserRole)
         if path:
-            # Файл — загружаем модель как раньше
+            # Файл — отменяем ждущий таймер одиночного клика по папке
+            # (иначе после 250 мс поверх новой модели откроется старое превью)
+            self._click_timer.stop()
+            self._pending_click_item = None
             self.model_selected.emit(path)
         else:
             # Папка — ждём, не будет ли двойного клика
